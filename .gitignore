@@ -1,0 +1,8 @@
+/plan-preview.html
+/proposal-preview.html
+/mermaid.min.js
+
+# Vendored ~5.3MB Mermaid bundle — kept out of git history (repo's own
+# large-blob commit guard caps at 5MB). Fetched locally by
+# scripts/bootstrap-mermaid.sh instead. See skills/present-plan/SKILL.md.
+skills/present-plan/assets/mermaid.min.js
