@@ -9,7 +9,7 @@
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-if ! git diff --name-only HEAD~1 HEAD -- .claude-plugin/plugin.json 2>/dev/null | grep -q .; then
+if ! git diff --name-only HEAD~1 HEAD -- plugins/business-os/.claude-plugin/plugin.json 2>/dev/null | grep -q .; then
   exit 0
 fi
 
