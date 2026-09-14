@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
-# After a commit that touched plugin-runtime content (and got a version
-# bump from the pre-commit hook), push to origin and refresh the plugin
-# cache in every venture folder that has business-os installed at local
-# scope, so the NEXT session opened there already has the change.
+# After a commit that touched a plugin's runtime content (and got a
+# version bump from the pre-commit hook), push to origin and refresh the
+# plugin cache in every venture folder that has that plugin installed at
+# local scope, so the NEXT session opened there already has the change.
+# Loops over every plugins/*/ directory so it stays correct as more
+# plugins (business-os, marketing-os, ...) are added.
 #
 # Does not affect already-running sessions: Claude Code reads the plugin
 # cache at session start only, so an open session still needs a restart.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-if ! git diff --name-only HEAD~1 HEAD -- plugins/business-os/.claude-plugin/plugin.json 2>/dev/null | grep -q .; then
+changed_plugins=()
+for plugin_dir in plugins/*/; do
+  name=$(basename "$plugin_dir")
+  PLUGIN_JSON="plugins/${name}/.claude-plugin/plugin.json"
+  [ -f "$PLUGIN_JSON" ] || continue
+  if git diff --name-only HEAD~1 HEAD -- "$PLUGIN_JSON" 2>/dev/null | grep -q .; then
+    changed_plugins+=("$name")
+  fi
+done
+
+if [ "${#changed_plugins[@]}" -eq 0 ]; then
   exit 0
 fi
 
@@ -28,23 +40,25 @@ if [ ! -f "$installed_file" ]; then
   exit 0
 fi
 
-paths=$(jq -r '.plugins["business-os@business-os-marketplace"]? // [] | .[] | select(.scope=="local") | .projectPath' "$installed_file" 2>/dev/null)
+for name in "${changed_plugins[@]}"; do
+  paths=$(jq -r --arg n "$name" '.plugins[($n + "@business-os-marketplace")]? // [] | .[] | select(.scope=="local") | .projectPath' "$installed_file" 2>/dev/null)
 
-if [ -z "$paths" ]; then
-  echo "post-commit: no local-scope installs found — nothing to propagate to yet"
-  exit 0
-fi
+  if [ -z "$paths" ]; then
+    echo "post-commit: no local-scope installs of $name found — nothing to propagate to yet"
+    continue
+  fi
 
-echo "post-commit: refreshing plugin cache for installed venture folders"
-while IFS= read -r p; do
-  [ -n "$p" ] || continue
-  [ -d "$p" ] || { echo "  skip (missing): $p"; continue; }
-  echo "  $p"
-  (
-    cd "$p" && \
-    claude plugin marketplace update business-os-marketplace >/dev/null 2>&1 && \
-    claude plugin update business-os -s local 2>&1 | sed 's/^/    /'
-  ) || echo "    failed to update $p" >&2
-done <<< "$paths"
+  echo "post-commit: refreshing plugin cache for $name in installed venture folders"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    [ -d "$p" ] || { echo "  skip (missing): $p"; continue; }
+    echo "  $p"
+    (
+      cd "$p" && \
+      claude plugin marketplace update business-os-marketplace >/dev/null 2>&1 && \
+      claude plugin update "$name" -s local 2>&1 | sed 's/^/    /'
+    ) || echo "    failed to update $p" >&2
+  done <<< "$paths"
+done
 
 echo "post-commit: done. A NEW session opened in each folder above now has the change; any already-open session needs a restart to see it."

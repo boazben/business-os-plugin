@@ -1,40 +1,50 @@
 #!/usr/bin/env bash
-# Auto-bumps the plugin's patch version whenever a commit touches
-# plugin-runtime content (agents/skills/commands/plugin hooks/manifest),
-# so `claude plugin update` has something new to detect. Skipped if
-# plugin.json's version was already changed by hand in this commit.
+# Auto-bumps each plugin's patch version whenever a commit touches that
+# plugin's runtime content (agents/skills/commands/plugin hooks/manifest),
+# so `claude plugin update` has something new to detect for it. Skipped
+# per-plugin if its plugin.json version was already changed by hand in
+# this commit. Loops over every plugins/*/ directory so it stays correct
+# as more plugins (business-os, marketing-os, ...) are added.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-PLUGIN_JSON="plugins/business-os/.claude-plugin/plugin.json"
 MARKETPLACE_JSON=".claude-plugin/marketplace.json"
-
 changed=$(git diff --cached --name-only)
-relevant=$(printf '%s\n' "$changed" | grep -E '^plugins/business-os/(agents/|skills/|commands/|hooks/|\.claude-plugin/plugin\.json)' || true)
 
-[ -n "$relevant" ] || exit 0
+for plugin_dir in plugins/*/; do
+  name=$(basename "$plugin_dir")
+  PLUGIN_JSON="plugins/${name}/.claude-plugin/plugin.json"
+  [ -f "$PLUGIN_JSON" ] || continue
 
-if printf '%s\n' "$changed" | grep -qx "$PLUGIN_JSON"; then
-  old_version=$(git show "HEAD:$PLUGIN_JSON" 2>/dev/null | jq -r .version 2>/dev/null || echo "")
-  new_version_staged=$(jq -r .version "$PLUGIN_JSON")
-  if [ -n "$old_version" ] && [ "$old_version" != "$new_version_staged" ]; then
-    echo "pre-commit: version already bumped by hand ($old_version -> $new_version_staged), skipping auto-bump"
-    exit 0
+  relevant=$(printf '%s\n' "$changed" | grep -E "^plugins/${name}/(agents/|skills/|commands/|hooks/|\\.claude-plugin/plugin\\.json)" || true)
+  [ -n "$relevant" ] || continue
+
+  if printf '%s\n' "$changed" | grep -qx "$PLUGIN_JSON"; then
+    old_version=$(git show "HEAD:$PLUGIN_JSON" 2>/dev/null | jq -r .version 2>/dev/null || echo "")
+    new_version_staged=$(jq -r .version "$PLUGIN_JSON")
+    if [ -n "$old_version" ] && [ "$old_version" != "$new_version_staged" ]; then
+      echo "pre-commit: $name version already bumped by hand ($old_version -> $new_version_staged), skipping auto-bump"
+      continue
+    fi
   fi
-fi
 
-current=$(jq -r .version "$PLUGIN_JSON")
-IFS='.' read -r major minor patch <<< "$current"
-new_version="$major.$minor.$((patch + 1))"
+  current=$(jq -r .version "$PLUGIN_JSON")
+  IFS='.' read -r major minor patch <<< "$current"
+  new_version="$major.$minor.$((patch + 1))"
 
-tmp=$(mktemp)
-jq --arg v "$new_version" '.version = $v' "$PLUGIN_JSON" > "$tmp" && mv "$tmp" "$PLUGIN_JSON"
-git add "$PLUGIN_JSON"
+  tmp=$(mktemp)
+  jq --arg v "$new_version" '.version = $v' "$PLUGIN_JSON" > "$tmp" && mv "$tmp" "$PLUGIN_JSON"
+  git add "$PLUGIN_JSON"
 
-if [ -f "$MARKETPLACE_JSON" ]; then
-  tmp2=$(mktemp)
-  jq --arg v "$new_version" '.plugins[0].version = $v' "$MARKETPLACE_JSON" > "$tmp2" && mv "$tmp2" "$MARKETPLACE_JSON"
-  git add "$MARKETPLACE_JSON"
-fi
+  if [ -f "$MARKETPLACE_JSON" ]; then
+    tmp2=$(mktemp)
+    jq --arg v "$new_version" --arg n "$name" \
+      '.plugins = [.plugins[] | if .name == $n then .version = $v else . end]' \
+      "$MARKETPLACE_JSON" > "$tmp2" && mv "$tmp2" "$MARKETPLACE_JSON"
+    git add "$MARKETPLACE_JSON"
+  fi
 
-echo "pre-commit: auto-bumped business-os version $current -> $new_version"
+  echo "pre-commit: auto-bumped $name version $current -> $new_version"
+done
+
+exit 0
