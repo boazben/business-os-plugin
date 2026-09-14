@@ -3,6 +3,6 @@
   "description": "מרקטפלייס מקומי המכיל את plugin ה-business-os בלבד.",
   "owner": { "name": "Boaz" },
   "plugins": [
-    { "name": "business-os", "source": "./", "version": "0.1.0" }
+    { "name": "business-os", "source": "./", "version": "0.1.1" }
   ]
 }
