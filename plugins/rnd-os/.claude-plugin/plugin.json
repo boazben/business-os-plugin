@@ -1,7 +1,7 @@
 {
   "name": "rnd-os",
   "description": "מחלקת מחקר ופיתוח מלאה — מאפיון מול המנכ\"ל ועד מוצר שרץ ב-prod (domain, ענן, DB, סליקה): מחקר, ארכיטקטורה, UX/UI, פרונט, בקאנד, תשתיות, DevOps, QA, code review, ניהול מוצר/פרויקט/גרסאות — ואבטחת מידע עם זכות וטו שנאכפת טכנית.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "author": {
     "name": "Boaz Ben David",
     "email": "boaz.bdqwe@gmail.com"
