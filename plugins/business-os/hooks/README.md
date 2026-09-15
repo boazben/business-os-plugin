@@ -29,3 +29,16 @@ Consent is a file in this plugin, not a per-session setting. The plugin is the o
 
 - **To give consent:** the founder asks for `consent.json` to be committed. Its git history is the record of who approved it and when.
 - **To revoke:** delete the file, or set the value to `false`, and commit.
+
+## What `board-gate.sh` does
+
+It runs before Notion writes: `notion-create-pages`, `notion-update-page` and `notion-update-data-source`.
+
+- **Only the founder approves board tasks.** The `run-board` skill moves tasks between statuses, but `מאושר` (approved) is set by the founder in Notion's own UI, where no hook runs.
+- **It blocks** a call that would:
+  - set any status column to a value containing `מאושר`, or any other column to exactly `מאושר` (invisible characters and niqqud are stripped first);
+  - change a data source's schema in a way that mentions `מאושר` (renaming an option to it would approve every task that had the old one);
+  - move a data source to the trash.
+- **It allows** everything else, including page content and result text that mention the word.
+- **Fails closed:** if `python3` is missing or the check crashes, any mention of `מאושר` or `in_trash: true` in the call blocks it.
+- **Known limits:** it matches the claude.ai Notion connector's tool names. A different Notion MCP server with other tool names, or the founder's Notion AI, is not covered.

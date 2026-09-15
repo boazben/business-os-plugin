@@ -10,6 +10,16 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "^mcp__.*notion.*(create[-_]pages?|update[-_]page|update[-_]data[-_]source)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/board-gate.sh",
+            "timeout": 15
+          }
+        ]
       }
     ]
   }
