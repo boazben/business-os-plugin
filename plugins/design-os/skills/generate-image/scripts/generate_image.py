@@ -18,6 +18,13 @@ Where the budget and spend log live:
   otherwise paid generation is refused, because spend could not be remembered.
 BUSINESS_OS_STATE_DIR overrides both (tests; the design-os hook blocks agents from setting it).
 
+Where the API key comes from: the GEMINI_API_KEY environment variable, else the
+file gemini-api-key in that same folder (one line, the key alone). The file is
+the only way in Cowork, where nothing but the mounted project folder survives a
+session. The script keeps it out of git with <folder>/.gitignore and warns if git
+already tracks it. The key is sent to Google in a header and never printed; the
+design-os hook blocks agents from reading the file.
+
 Usage:
     generate_image.py --prompt "..." --out design/assets/x/a.png [--model flash|pro|lite]
                       [--size 1K|2K|4K] [--aspect 1:1] [--ref img.png ...]
@@ -32,6 +39,7 @@ import json
 import mimetypes
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -51,6 +59,9 @@ DEFAULT_BUDGET_USD = 10.0
 ALERT_LEVEL = 0.9
 BLOCK_LEVEL = 1.3
 REAL_MACHINE_HOME_RE = re.compile(r"^(/home/|/mnt/|/Users/|/c/|/[A-Za-z]/Users/|[A-Za-z]:\\)")
+KEY_ENV = "GEMINI_API_KEY"
+KEY_FILE = "gemini-api-key"
+KEY_RE = re.compile(r"[A-Za-z0-9_\-]{20,}")
 
 # Official Gemini API paid-tier prices, checked 2026-09-15: per output image, and
 # per 1M tokens for input and for text/thinking output.
@@ -93,6 +104,72 @@ def state_dir():
     cwd = Path.cwd().resolve()
     if cwd != home and home not in cwd.parents and cwd.parts[:2] != ("/", "tmp"):
         return cwd / ".business-os"
+    return None
+
+
+def protect_key_file(state):
+    """Best effort: make <state>/.gitignore name the key file, so `git add -A` skips it."""
+    if not state.is_dir():
+        return
+    ignore = state / ".gitignore"
+    try:
+        text = ignore.read_text() if ignore.exists() else ""
+        if KEY_FILE not in (line.strip() for line in text.splitlines()):
+            with open(ignore, "a") as handle:
+                handle.write(("" if not text or text.endswith("\n") else "\n") + KEY_FILE + "\n")
+    except OSError:
+        pass
+
+
+def key_tracked_by_git(state):
+    try:
+        result = subprocess.run(["git", "ls-files", "--error-unmatch", KEY_FILE], cwd=state,
+                                capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def load_key(state):
+    """(key, where it came from, problem) — environment first, then <state>/gemini-api-key."""
+    key = os.environ.get(KEY_ENV, "").strip()
+    if key:
+        return key, f"משתנה הסביבה {KEY_ENV}", None
+    if state is None:
+        return "", None, None
+    protect_key_file(state)
+    path = state / KEY_FILE
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return "", None, None
+    except OSError:
+        return "", None, f"קובץ המפתח {path} קיים אבל לא נפתח."
+    try:
+        text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return "", None, f"קובץ המפתח {path} לא קריא — שומרים אותו כטקסט רגיל (UTF-8)."
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+    value = lines[0] if lines else ""
+    if "=" in value:  # tolerate GEMINI_API_KEY=... pasted as is
+        value = value.split("=", 1)[1]
+    # Quotes, spaces and invisible marks a copy from a browser or a Hebrew UI can add.
+    value = "".join(ch for ch in value if ch.isascii() and ch.isprintable() and not ch.isspace()).strip("\"'")
+    if not KEY_RE.fullmatch(value):
+        return "", None, f"קובץ המפתח {path} קיים, אבל התוכן לא נראה כמו מפתח. צריך שורה אחת, רק המפתח."
+    return value, f"הקובץ {path}", None
+
+
+def missing_key_message(state, problem=None):
+    return (f"חסר מפתח Gemini — לא נוצרה תמונה. {problem + ' ' if problem else ''}המייסד שם את המפתח, מחוץ "
+            f"לשיחה, בקובץ {state / KEY_FILE} (שורה אחת, רק המפתח) או במשתנה הסביבה {KEY_ENV}. "
+            "לא מבקשים את המפתח בצ'אט.")
+
+
+def tracked_key_warning(state, source):
+    if source and source.startswith("הקובץ") and key_tracked_by_git(state):
+        return ("⚠️ קובץ המפתח נמצא ב-git. המייסד צריך להוציא אותו מה-repo ולהחליף את המפתח ב-Google Cloud "
+                "— חסם בראש הדיווח.")
     return None
 
 
@@ -216,6 +293,8 @@ def call_api(key, payload):
     except urllib.error.HTTPError as exc:
         message = f"ה-API של Google החזיר שגיאה {exc.code}: {api_error_message(exc.read().decode(errors='replace'))}"
         raise ApiError(message, billed_maybe=exc.code >= 500) from exc
+    except UnicodeEncodeError as exc:  # a character that cannot go in an HTTP header; nothing was sent
+        raise ApiError("המפתח מכיל תווים לא תקינים — לא נשלחה בקשה ל-Google.", billed_maybe=False) from exc
     except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException, OSError) as exc:
         raise ApiError(f"אין תשובה מלאה מ-Google ({exc}).", billed_maybe=True) from exc
     except ValueError as exc:
@@ -265,6 +344,11 @@ def status():
     budget = load_budget(state)
     spent, images = month_spend(state, month_key())
     print(f"החודש ({month_key()}, UTC): {images} תמונות. מונה: {state}")
+    _, source, problem = load_key(state)
+    print(f"מפתח Gemini: נמצא — {source}." if source else missing_key_message(state, problem))
+    warning = tracked_key_warning(state, source)
+    if warning:
+        print(warning)
     print(budget_line(spent, budget))
 
 
@@ -277,13 +361,16 @@ def generate(args):
         fail(f"סיומת קובץ לא נתמכת: {args.out} (png, jpg, webp).")
     if len(args.ref) > MAX_REFS:
         fail(f"יותר מדי קבצי ייחוס ({len(args.ref)}); המקסימום {MAX_REFS}.")
-    key = os.environ.get("GEMINI_API_KEY")
-    if not key:
-        fail("חסר משתנה הסביבה GEMINI_API_KEY — המייסד צריך להגדיר אותו. לא נוצרה תמונה.")
     state = state_dir()
     if state is None:
         print(no_meter_message())
         sys.exit(3)
+    key, source, problem = load_key(state)
+    if not key:
+        fail(missing_key_message(state, problem))
+    warning = tracked_key_warning(state, source)
+    if warning:
+        print(warning)
 
     payload = build_payload(args, model["id"])
     fallback_tokens = REF_ALLOWANCE_USD * len(args.ref) + model["thinking_allowance"]
