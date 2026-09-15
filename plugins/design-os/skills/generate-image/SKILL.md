@@ -26,14 +26,15 @@ description: יוצר או עורך תמונה עם Nano Banana (Google Gemini) 
 ל-`pro` ול-4K — timeout של 300000 בכלי Bash.
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/scripts/generate_image.py --prompt "..." --model flash --size 1K --aspect 1:1 --out design/assets/<slug>/<name>.png
+python3 ${CLAUDE_SKILL_DIR}/scripts/generate_image.py --prompt "..." --model flash --size 1K --aspect 1:1 --out design/assets/<slug>/<name>.jpg
 ```
 
 - `--model`: `flash` לטיוטות, `pro` לגרסה סופית, `lite` לסקיצות (1K בלבד).
 - `--aspect`: 1:1, 4:5, 5:4, 3:4, 4:3, 2:3, 3:2, 9:16, 16:9, 21:9.
 - `--size`: 1K, 2K, 4K (`lite` — 1K בלבד).
-- `--out` — ‎.png, ‎.jpg או ‎.webp, נתיב יחסי לתיקיית ה-venture. אם המודל
-  מחזיר כמה תמונות, הנוספות נשמרות כ-`<name>-2.png` וכו'.
+- `--out` — **‎.jpg בלבד** (Google מחזיר רק JPEG), נתיב יחסי לתיקיית
+  ה-venture. אם המודל מחזיר כמה תמונות, הנוספות נשמרות כ-`<name>-2.jpg` וכו'.
+  צריך PNG או רקע שקוף — מייצאים מ-Canva.
 - `--ref <קובץ>` — תמונת ייחוס או תמונה לעריכה; אפשר כמה פעמים (עד 14).
   עריכה = `--ref` לתמונה הקיימת + תיאור השינוי ב-`--prompt`.
 
@@ -56,10 +57,10 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/generate_image.py --prompt "..." --model fla
      את המייסד.
 2. **תמונת ייחוס מהפרויקט** — מעלים אותה קודם עם `device_stage_files`,
    ומעבירים ל-`--ref` את ה-`stagedPath` שחזר.
-3. **יצירה** — `--out /mnt/user-data/outputs/design/assets/<slug>/<name>.png`.
+3. **יצירה** — `--out /mnt/user-data/outputs/design/assets/<slug>/<name>.jpg`.
 4. **שמירה בתיקיית הפרויקט — חובה.** `mcp__remote-devices__device_commit_files`
    עם `stagedPath` = הקובץ ב-`/mnt/user-data/outputs/...`, ו-`devicePath` =
-   הנתיב המלא של `design/assets/<slug>/<name>.png` בתוך התיקייה המחוברת.
+   הנתיב המלא של `design/assets/<slug>/<name>.jpg` בתוך התיקייה המחוברת.
    אותו דבר ל-`record.md`. בדיווח — הנתיב בתיקיית הפרויקט, לא בענן.
 5. **"אין תשובה מלאה מ-Google"** — הגישה ל-Google חסומה בסביבה. חסם בראש
    הדיווח: המייסד בודק את הגדרות הרשת ב-Claude. לא עוקפים דרך

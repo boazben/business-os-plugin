@@ -16,8 +16,11 @@ already tracks it. The key is sent to Google in a header and never printed; the
 design-os hook blocks agents from reading the file.
 
 Usage:
-    generate_image.py --prompt "..." --out design/assets/x/a.png [--model flash|pro|lite]
+    generate_image.py --prompt "..." --out design/assets/x/a.jpg [--model flash|pro|lite]
                       [--size 1K|2K|4K] [--aspect 1:1] [--ref img.png ...]
+
+Output is JPEG only: on 2026-09-16 the API answered 400 to image/png for flash
+("Supported values: 'image/jpeg'").
     generate_image.py --status
 
 Exit codes: 0 ok, 2 error.
@@ -51,7 +54,7 @@ MODELS = {
 }
 MAX_REFS = 14
 ASPECTS = ("1:1", "3:2", "2:3", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9")
-OUT_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+OUT_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
 
 
 def fail(message) -> NoReturn:
@@ -254,7 +257,7 @@ def generate(args):
     if args.size not in model["sizes"]:
         fail(f"המודל {args.model} לא תומך בגודל {args.size}. גדלים אפשריים: {', '.join(model['sizes'])}.")
     if Path(args.out).suffix.lower() not in OUT_MIME:
-        fail(f"סיומת קובץ לא נתמכת: {args.out} (png, jpg, webp).")
+        fail(f"סיומת קובץ לא נתמכת: {args.out}. Google מחזיר רק JPEG — --out צריך להסתיים ב-.jpg.")
     if len(args.ref) > MAX_REFS:
         fail(f"יותר מדי קבצי ייחוס ({len(args.ref)}); המקסימום {MAX_REFS}.")
     key, _, folder, problem = load_key()
@@ -283,7 +286,7 @@ def main():
     parser = argparse.ArgumentParser(description="Nano Banana image generation.")
     parser.add_argument("--status", action="store_true", help="say whether a Gemini key was found, and where")
     parser.add_argument("--prompt")
-    parser.add_argument("--out", help="output file (.png, .jpg, .webp)")
+    parser.add_argument("--out", help="output file (.jpg)")
     parser.add_argument("--model", choices=sorted(MODELS), default="flash")
     parser.add_argument("--size", choices=("1K", "2K", "4K"), default="1K")
     parser.add_argument("--aspect", choices=ASPECTS, default="1:1")
