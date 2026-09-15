@@ -6,18 +6,22 @@ whether that pairing fits the org structure. It never records the prompt text
 and never blocks anything; pre-tool.sh runs it with stderr discarded, so a
 failure here costs a missing row, not a broken session.
 
-The policy column is derived from plugin namespaces, so a new department
-needs no table update: `<plugin>:<name>-lead` is a department head, any other
-`<plugin>:<name>` is a member of that plugin's team.
+Department heads follow the `<x>-os:<x>-lead` naming convention, so a new
+department needs no change here. platform-lead is the one exception to the
+convention. Anything else inside a plugin is a team member — including
+rnd-os:security-lead, which only rnd-lead calls.
 """
 import datetime
+import fcntl
 import json
 import os
 import sys
+import tempfile
 
 MAX_BYTES = 1_000_000
+EXTRA_HEADS = {"business-os:platform-lead"}
 HEADER = (
-    "| time (UTC) | session | caller | target | policy | description | cwd |\n"
+    "| time (UTC) | session | caller | target | policy | description | folder |\n"
     "|---|---|---|---|---|---|---|\n"
 )
 
@@ -27,24 +31,31 @@ def split(name):
     return (plugin or None), short
 
 
+def is_head(name):
+    plugin, short = split(name)
+    if plugin is None:
+        return False
+    prefix = plugin[:-3] if plugin.endswith("-os") else plugin
+    return name in EXTRA_HEADS or short == prefix + "-lead"
+
+
 def policy(caller, target):
-    caller_plugin, caller_name = split(caller)
-    target_plugin, target_name = split(target)
-    target_is_lead = target_name.endswith("-lead")
+    caller_plugin, _ = split(caller)
+    target_plugin, _ = split(target)
 
     if caller == "main":
-        if target_plugin and not target_is_lead:
+        if target_plugin and not is_head(target):
             return "deviation: CEO called a team member directly"
         return "ok"
     if caller_plugin is None:
         return "ok"
     if target_plugin is None:
         return "deviation: department agent called a built-in agent"
-    if caller_name.endswith("-lead"):
-        if target_plugin == caller_plugin or target_is_lead:
+    if is_head(caller):
+        if target_plugin == caller_plugin or is_head(target):
             return "ok"
         return "deviation: department head called another department's team member"
-    if target_plugin == caller_plugin and not target_is_lead:
+    if target_plugin == caller_plugin and not is_head(target):
         return "ok"
     return "deviation: team member called outside its own team"
 
@@ -53,16 +64,21 @@ def cell(value, limit=120):
     return " ".join(str(value).split()).replace("|", "/")[:limit]
 
 
-def trim(path):
-    with open(path) as f:
-        lines = f.readlines()
-    body = lines[2:]
-    with open(path, "w") as f:
-        f.write(HEADER)
-        f.writelines(body[len(body) // 2:])
+def trim(f, path):
+    f.seek(0)
+    body = f.readlines()[2:]
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+    with os.fdopen(fd, "w") as out:
+        out.write(HEADER)
+        out.writelines(body[len(body) // 2:])
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
 
 
 def main():
+    home = os.environ.get("HOME")
+    if not home:
+        return
     try:
         event = json.load(sys.stdin)
     except ValueError:
@@ -71,6 +87,10 @@ def main():
     tool_input = event.get("tool_input") or {}
     caller = event.get("agent_type") or "main"
     target = tool_input.get("subagent_type") or "general-purpose"
+    verdict = policy(caller, target)
+    note = os.environ.get("BUSINESS_OS_NOTE")
+    if note:
+        verdict = f"{verdict}; {note}"
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     row = "| " + " | ".join(cell(v) for v in (
@@ -78,20 +98,22 @@ def main():
         (event.get("session_id") or "")[:8],
         caller,
         target,
-        policy(caller, target),
+        verdict,
         tool_input.get("description") or "",
-        event.get("cwd") or "",
+        os.path.basename((event.get("cwd") or "").rstrip("/")),
     )) + " |\n"
 
-    path = os.path.join(os.environ.get("HOME") or ".", ".business-os", "ledger.md")
+    path = os.path.join(home, ".business-os", "ledger.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    is_new = not os.path.exists(path)
-    with open(path, "a") as f:
-        if is_new:
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "r+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        if os.fstat(f.fileno()).st_size == 0:
             f.write(HEADER)
         f.write(row)
-    if os.path.getsize(path) > MAX_BYTES:
-        trim(path)
+        f.flush()
+        if os.fstat(f.fileno()).st_size > MAX_BYTES:
+            trim(f, path)
 
 
 if __name__ == "__main__":
