@@ -150,9 +150,14 @@ def load_key():
 
 
 def missing_key_message(problem=None):
-    return (f"חסר מפתח Gemini — לא נוצרה תמונה. {problem + ' ' if problem else ''}"
-            f"המייסד שם את המפתח, מחוץ לשיחה, בקובץ {STATE_FOLDER}/{KEY_FILE} בתיקיית הפרויקט "
-            f"(שורה אחת, רק המפתח) או במשתנה הסביבה {KEY_ENV}. לא מבקשים את המפתח בצ'אט.")
+    message = f"חסר מפתח Gemini — לא נוצרה תמונה. {problem + ' ' if problem else ''}"
+    if COWORK_UPLOADS.parent.is_dir() and not problem:
+        return message + (
+            f"ב-Cowork בענן: מעלים עם device_stage_files את {STATE_FOLDER}/{KEY_FILE} מהתיקייה המחוברת, ואז "
+            "מריצים שוב את אותה פקודה בדיוק — בלי cd, בלי להעתיק את הקובץ ובלי להוסיף נתיב. הסקריפט מוצא "
+            "את הקובץ שהועלה לבד. אין קובץ כזה בתיקייה המחוברת — חסם בראש הדיווח. לא מבקשים את המפתח בצ'אט.")
+    return message + (f"המייסד שם את המפתח, מחוץ לשיחה, בקובץ {STATE_FOLDER}/{KEY_FILE} בתיקיית הפרויקט "
+                      f"(שורה אחת, רק המפתח) או במשתנה הסביבה {KEY_ENV}. לא מבקשים את המפתח בצ'אט.")
 
 
 def tracked_key_warning(folder):
