@@ -6,3 +6,4 @@
 # large-blob commit guard caps at 5MB). Fetched locally by
 # scripts/bootstrap-mermaid.sh instead. See plugins/business-os/skills/present-plan/SKILL.md.
 plugins/business-os/skills/present-plan/assets/mermaid.min.js
+__pycache__/

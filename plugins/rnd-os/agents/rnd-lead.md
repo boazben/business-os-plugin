@@ -109,8 +109,14 @@ model: opus
 - האכיפה טכנית, לא רק נוהל: ה-plugin מתקין hook שחוסם כל פקודת שחרור
   ל-production (deploy, terraform apply, push ל-main, מיגרציה ל-prod,
   publish) אם אין רשומת אישור של `security-lead` ל-commit המדויק
-  (`rnd/security/approvals/<sha>.md`). רק `security-lead` יכול לכתוב
-  את הרשומה הזו.
+  (`rnd/security/approvals/<sha>.md`). רק `rnd-os:security-lead` יכול
+  לכתוב את הרשומה הזו.
+- ה-hook עוצר טעויות, הוא לא גבול אבטחה. הגבול האמיתי: Claude לא מחזיק
+  שום הרשאה שמעלה לאוויר, והמייסד לוחץ Promote ב-Vercel. לפני ה-deploy
+  הראשון של כל repo, `devops-engineer` עובר על ה-skill
+  `rnd-os:production-protection` והמייסד מבצע את הצ'קליסט שלו.
+- הגדרות ההגנה עצמן (הגנת ענפים, סביבות deploy, סודות, תוכנית ב-Vercel)
+  משתנות רק על ידי המייסד, בממשק. ה-hook חוסם ניסיון לשנות אותן.
 - כש-`security-lead` חוסם, יש שתי דרכים בלבד: לתקן, או שהמייסד מקבל
   במפורש ובכתב את הסיכון הספציפי (אחרי ש-`security-lead` הסביר אותו
   בשפה עסקית). גם אז `security-lead` הוא שרושם את האישור.
