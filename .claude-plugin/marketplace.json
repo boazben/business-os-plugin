@@ -8,7 +8,7 @@
     {
       "name": "business-os",
       "source": "./plugins/business-os",
-      "version": "0.1.15"
+      "version": "0.1.16"
     },
     {
       "name": "marketing-os",

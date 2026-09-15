@@ -12,7 +12,7 @@
         ]
       },
       {
-        "matcher": "^mcp__.*notion.*(create[-_]pages?|update[-_]page|update[-_]data[-_]source)$",
+        "matcher": "^mcp__.*[Nn]otion",
         "hooks": [
           {
             "type": "command",

@@ -1,42 +1,48 @@
 """business-os board gate: only the founder approves board tasks.
 
-Reads a PreToolUse payload for a Notion write tool on stdin. Exits 2 (block)
-when the call would set a task to the approved status, would change the
-board's schema around that status (renaming an option to it approves every
-task that had the old one), or would trash a data source. Exits 0 otherwise.
-Any other exit code means the check itself failed; board-gate.sh then falls
-back to a coarser text match rather than letting the call through unchecked.
+Reads a PreToolUse payload for a Notion tool on stdin and exits 2 (block) when
+the call would:
+- set a status-like property to an approved value, or any property to exactly
+  an approved value;
+- change a data source's schema around an approved value (renaming an option
+  to it approves every task that had the old one), or trash a data source;
+- duplicate a page (a copy of an approved task is an approved task), or hand
+  work to Notion's own AI agent, which could set the status on our behalf.
+Exits 0 otherwise. Any other exit code means the check itself failed;
+board-gate.sh then falls back to a coarser text match instead of allowing.
+
+Why a denylist of approved words rather than an allowlist of statuses: the hook
+sees every Notion database the founder uses, not only the board, and an
+allowlist would block status updates in all of them.
 """
 
 import json
-import re
 import sys
 import unicodedata
 
-# The option name, and its spelling without the vav (as written with niqqud).
-APPROVED_FORMS = ("מאושר", "מאשר")
 STATUS_NAMES = ("סטטוס", "status")
-
-# Characters that render as nothing but would defeat a plain comparison.
-INVISIBLE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
+# Substrings that mean "approved" inside a status value: מאושר, אושר, אושרה,
+# מאושרת all contain אושר; מאשר is the spelling without vav (niqqud form).
+APPROVED_PARTS = ("אושר", "מאשר", "approved")
+# Exact values that mean "approved" in any other property.
+APPROVED_VALUES = {"מאושר", "מאושרת", "אושר", "אושרה", "מאשר", "approved"}
+BLOCKED_TOOLS = ("duplicate-page", "spawn-session", "send-message-to-session")
 
 MESSAGE = (
-    "business-os: only the founder approves board tasks. Setting a task to "
-    "'מאושר', changing the board's status options around it, or trashing the "
-    "board is done by the founder in Notion itself. Leave the task at "
-    "'ממתין לאישור' and tell the founder what needs approval."
+    "business-os: only the founder approves board tasks, in Notion itself. "
+    "Claude does not set a status to 'מאושר' (approved), change status options "
+    "around it, trash a database, duplicate pages, or ask Notion AI to edit on "
+    "its behalf. Leave the task at 'ממתין לאישור' and tell the founder what "
+    "needs approval."
 )
 
 
-def norm(text):
-    decomposed = unicodedata.normalize("NFKD", text)
-    # Drop combining marks (Hebrew niqqud included) and invisible characters.
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return INVISIBLE.sub("", unicodedata.normalize("NFC", stripped)).strip()
-
-
-def mentions_approved(text):
-    return any(form in text for form in APPROVED_FORMS)
+def letters(text):
+    """Letters and digits only, casefolded; niqqud, marks, emoji, punctuation,
+    spaces and invisible direction characters are all dropped."""
+    decomposed = unicodedata.normalize("NFKD", str(text))
+    kept = (c for c in decomposed if unicodedata.category(c)[0] in "LN")
+    return unicodedata.normalize("NFC", "".join(kept)).casefold()
 
 
 def strings(value):
@@ -52,16 +58,16 @@ def approves(properties):
         try:
             properties = json.loads(properties)
         except ValueError:
-            return mentions_approved(norm(properties))
+            return any(part in letters(properties) for part in APPROVED_PARTS)
     if not isinstance(properties, dict):
         return False
     for name, value in properties.items():
-        is_status = any(s in norm(str(name)).lower() for s in STATUS_NAMES)
+        is_status = any(s in letters(name) for s in STATUS_NAMES)
         for text in strings(value):
-            clean = norm(text)
-            # A status column blocks on any mention ("✅ מאושר"); other columns
-            # only on the exact value, so a title like "האם זה מאושר" passes.
-            if clean in APPROVED_FORMS or (is_status and mentions_approved(clean)):
+            clean = letters(text)
+            if clean in APPROVED_VALUES:
+                return True
+            if is_status and any(part in clean for part in APPROVED_PARTS):
                 return True
     return False
 
@@ -78,22 +84,31 @@ def any_properties_approve(node):
     return False
 
 
+def blocked(tool, tool_input):
+    if tool.endswith(BLOCKED_TOOLS):
+        return True
+    if not isinstance(tool_input, dict):
+        return False
+    if tool.endswith("update-data-source"):
+        dumped = letters(json.dumps(tool_input, ensure_ascii=False))
+        return (tool_input.get("in_trash") is True
+                or any(part in dumped for part in APPROVED_PARTS))
+    if tool.endswith(("create-pages", "update-page")):
+        return any_properties_approve(tool_input)
+    return False
+
+
 def main():
     payload = json.load(sys.stdin)
-    tool = norm(str(payload.get("tool_name", ""))).lower().replace("_", "-")
-    tool_input = payload.get("tool_input") or {}
-
-    if "data-source" in tool:
-        dumped = norm(json.dumps(tool_input, ensure_ascii=False))
-        blocked = mentions_approved(dumped) or tool_input.get("in_trash") is True
-    else:
-        blocked = any_properties_approve(tool_input)
-
-    if blocked:
+    tool = str(payload.get("tool_name", "")).lower().replace("_", "-")
+    if blocked(tool, payload.get("tool_input")):
         print(MESSAGE, file=sys.stderr)
         return 2
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:  # noqa: BLE001 - any failure hands off to the fallback
+        sys.exit(3)
