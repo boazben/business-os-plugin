@@ -40,7 +40,8 @@ ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
 KEY_ENV = "GEMINI_API_KEY"
 KEY_FILE = "gemini-api-key"
 STATE_FOLDER = ".business-os"
-KEY_RE = re.compile(r"[A-Za-z0-9_\-]{20,}")
+# Classic keys are AIza + 35 characters; newer Google keys also contain a dot.
+KEY_RE = re.compile(r"[A-Za-z0-9_.\-]{20,}")
 COWORK_UPLOADS = Path("/mnt/user-data/uploads")
 
 MODELS = {

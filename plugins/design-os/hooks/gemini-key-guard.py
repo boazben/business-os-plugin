@@ -31,9 +31,9 @@ import sys
 
 KEY_FILE = "gemini-api-key"
 KEY_FILE_RE = re.compile(re.escape(KEY_FILE), re.I)
-# Google API keys: "AIza" and 35 more characters.
-KEY_VALUE_RE = re.compile(r"AIza[0-9A-Za-z_\-]{30,}")
-KEY_PREFIX = "AIza"
+# Google API keys: classic "AIza" + 35 characters, or the newer "AQ." + ~50 characters.
+KEY_VALUE_RE = re.compile(r"AIza[0-9A-Za-z_\-]{30,}|AQ\.[0-9A-Za-z_\-]{40,}")
+KEY_PREFIXES = ("AIza", "AQ.")
 # Reading the variable's value, as opposed to naming it.
 KEY_VAR_READ_RE = re.compile(
     r"\$\{?!?GEMINI_API_KEY\b|\bprintenv\s+GEMINI_API_KEY\b|environ\b.{0,40}GEMINI_API_KEY"
@@ -72,7 +72,7 @@ def block(reason):
 
 def reaches_key(command):
     """True for a shell command that could read or reveal the Gemini API key."""
-    if (KEY_FILE_RE.search(command) or KEY_VAR_READ_RE.search(command) or KEY_PREFIX in command
+    if (KEY_FILE_RE.search(command) or KEY_VAR_READ_RE.search(command) or any(k in command for k in KEY_PREFIXES)
             or ENV_DUMP_RE.search(command)):
         return True
     for token in STATE_TOKEN_RE.findall(command):
@@ -117,7 +117,7 @@ def main():
             block(KEY_MSG)
     elif tool == "Grep":
         where = f"{tool_input.get('path') or ''} {tool_input.get('glob') or ''}"
-        if ".business-os" in where or KEY_FILE_RE.search(where) or KEY_PREFIX in str(tool_input.get("pattern") or ""):
+        if ".business-os" in where or KEY_FILE_RE.search(where) or any(k in str(tool_input.get("pattern") or "") for k in KEY_PREFIXES):
             block(KEY_MSG)
     sys.exit(0)
 
