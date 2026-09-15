@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Agent|Task|Bash|Read)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/pre-tool.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
