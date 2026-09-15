@@ -1,0 +1,7 @@
+{
+  "raise_subagent_depth": true,
+  "what": "In a capped Cowork sandbox, set env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=3 in the sandbox Claude settings so department heads can call their reviewers. Nothing else is changed.",
+  "approved_by": "Boaz Ben David (founder)",
+  "approved_on": "2026-09-15",
+  "revoke": "Delete this file or set raise_subagent_depth to false, then commit."
+}
