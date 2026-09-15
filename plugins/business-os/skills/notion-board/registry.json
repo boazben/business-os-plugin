@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "workspace": "בעז בן-דוד's Notion",
+  "hub_page": {
+    "title": "Business OS",
+    "page_id": "3dc29cc4-3683-817c-bc96-f3f67f4d1a7b"
+  },
+  "projects": {
+    "database_id": "ca7a57c8-6c90-4945-b8c7-88a49fbcb0b0",
+    "data_source_id": "b0d5cc23-5b8b-4267-99c4-3d4c70ba819c"
+  },
+  "tasks": {
+    "database_id": "7e7a6414-94ab-446d-a1b5-920260cf3148",
+    "data_source_id": "aec80c35-57df-45fb-88ee-32e42b5b4c8b"
+  }
+}

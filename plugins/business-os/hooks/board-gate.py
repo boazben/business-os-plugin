@@ -1,13 +1,15 @@
-"""business-os board gate: only the founder approves board tasks.
+"""business-os board gate: keeps the Notion board inside its contract.
 
 Reads a PreToolUse payload for a Notion tool on stdin and exits 2 (block) when
 the call would:
 - set a status-like property to an approved value, or any property to exactly
-  an approved value;
-- change a data source's schema around an approved value (renaming an option
-  to it approves every task that had the old one), or trash a data source;
-- duplicate a page (a copy of an approved task is an approved task), or hand
-  work to Notion's own AI agent, which could set the status on our behalf.
+  an approved value (only the founder approves, in Notion's own UI);
+- create a database, change any data source's schema, or trash one (the
+  schema is the contract in skills/notion-board; renaming an option to
+  "approved" would approve every task that had the old one);
+- create a page without a parent (a loose page instead of a board row);
+- move or duplicate pages (a copy of an approved task is an approved task);
+- hand work to Notion's own AI agent, which could do any of this for Claude.
 Exits 0 otherwise. Any other exit code means the check itself failed;
 board-gate.sh then falls back to a coarser text match instead of allowing.
 
@@ -26,14 +28,22 @@ STATUS_NAMES = ("סטטוס", "status")
 APPROVED_PARTS = ("אושר", "מאשר", "approved")
 # Exact values that mean "approved" in any other property.
 APPROVED_VALUES = {"מאושר", "מאושרת", "אושר", "אושרה", "מאשר", "approved"}
-BLOCKED_TOOLS = ("duplicate-page", "spawn-session", "send-message-to-session")
+STRUCTURE_TOOLS = (
+    "create-database",
+    "update-data-source",
+    "move-pages",
+    "duplicate-page",
+    "spawn-session",
+    "send-message-to-session",
+)
 
 MESSAGE = (
-    "business-os: only the founder approves board tasks, in Notion itself. "
-    "Claude does not set a status to 'מאושר' (approved), change status options "
-    "around it, trash a database, duplicate pages, or ask Notion AI to edit on "
-    "its behalf. Leave the task at 'ממתין לאישור' and tell the founder what "
-    "needs approval."
+    "business-os: this Notion call is outside the board contract "
+    "(skill business-os:notion-board). Claude does not set a task to 'מאושר' "
+    "(only the founder approves, in Notion itself), create databases, change "
+    "a database's columns or options, create pages without a parent, move or "
+    "duplicate pages, or hand work to Notion AI. Leave approvals at "
+    "'ממתין לאישור' and tell the founder what change is needed."
 )
 
 
@@ -85,14 +95,12 @@ def any_properties_approve(node):
 
 
 def blocked(tool, tool_input):
-    if tool.endswith(BLOCKED_TOOLS):
+    if tool.endswith(STRUCTURE_TOOLS):
         return True
     if not isinstance(tool_input, dict):
         return False
-    if tool.endswith("update-data-source"):
-        dumped = letters(json.dumps(tool_input, ensure_ascii=False))
-        return (tool_input.get("in_trash") is True
-                or any(part in dumped for part in APPROVED_PARTS))
+    if tool.endswith("create-pages") and not tool_input.get("parent"):
+        return True
     if tool.endswith(("create-pages", "update-page")):
         return any_properties_approve(tool_input)
     return False

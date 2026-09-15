@@ -32,16 +32,20 @@ Consent is a file in this plugin, not a per-session setting. The plugin is the o
 
 ## What `board-gate.sh` does
 
-It runs before every Notion MCP tool call (any tool name starting with `mcp__` that contains `notion`).
+It runs before every Notion MCP tool call (any tool name starting with `mcp__` that contains `notion`). It keeps Claude inside the board contract in `skills/notion-board`.
 
-- **Only the founder approves board tasks.** The `run-board` skill moves tasks between statuses, but `מאושר` (approved) is set by the founder in Notion's own UI, where no hook runs.
+- **Only the founder approves board tasks.** `מאושר` (approved) is set by the founder in Notion's own UI, where no hook runs.
+- **No session changes the board's structure.** The structure lives in `skills/notion-board/registry.json` and its SKILL.md; ad-hoc boards are what the contract replaced.
 - **It blocks** a call that would:
   - set a status-like property (name contains `סטטוס` or `status`) to a value containing `אושר`, `מאשר` or `approved`, or any other property to exactly one of those words. Values are compared letters-only: niqqud, emoji, punctuation, spaces and invisible characters are dropped first;
-  - change a data source's schema in a way that mentions those words (renaming an option to `מאושר` would approve every task that had the old one), or move a data source to the trash;
-  - duplicate a page (a copy of an approved task is approved), or hand work to Notion AI (`spawn-session`, `send-message-to-session`), which could set the status for Claude.
-- **It allows** everything else: reads, comments, creating databases, page content and result text that mention the word.
+  - create a database (`create-database`), change any data source's columns, options or trash state (`update-data-source`);
+  - create a page without a `parent` (a loose page instead of a board row);
+  - move or duplicate pages (`move-pages`, `duplicate-page`; a copy of an approved task is approved);
+  - hand work to Notion AI (`spawn-session`, `send-message-to-session`), which could do any of the above for Claude.
+- **It allows** everything else: reads, comments, creating rows under a parent, updating statuses other than approved, page content and result text that mention the word.
 - **Why a denylist, not an allowlist of statuses:** the hook sees every Notion database the founder uses. An allowlist would block status updates in all of them.
-- **Fails closed:** if `python3` is missing or the check fails, a Notion call that mentions those words, trashes something, duplicates a page or calls Notion AI is blocked. A hook timeout still lets the call through (Claude Code behaviour), so the check stays local and fast.
+- **Fails closed:** if `python3` is missing or the check fails, a Notion call that mentions those words, or is one of the structure tools, is blocked. A hook timeout still lets the call through (Claude Code behaviour), so the check stays local and fast.
+- **Changing the structure** is done by the founder in Notion, or in a development session where this plugin is not loaded, followed by an update to `registry.json` and SKILL.md.
 - **Known limits:**
   - A different Notion MCP server with other tool names (for example `API-patch-page`), or a Notion token reachable from Bash, is not covered.
   - The connector acts as the founder's own account, so Notion's "last edited by" cannot tell a Claude edit from the founder's. The hook is the control, not Notion's history.
