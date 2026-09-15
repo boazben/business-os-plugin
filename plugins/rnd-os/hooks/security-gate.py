@@ -11,8 +11,11 @@ subagents alike) in a folder where rnd-os is enabled:
 
 Approval record: <repo>/rnd/security/approvals/<full-commit-sha>.md with a line
 `verdict: APPROVED` or `verdict: APPROVED_WITH_ACCEPTED_RISK`. It stays valid
-while every change since that commit is under rnd/ (so committing the record
-itself does not invalidate it); any code change needs a new approval.
+while every change since that commit is under rnd/, is business-os state
+(.business-os/), or is an inert media or document file under design/ (so
+committing the record itself, or a new ad image, does not invalidate it). Any
+code change — including HTML, SVG, CSS or JS under design/, which can run if the
+repo is served — needs a new approval.
 
 Blocks by exiting 2 with the reason on stderr. Hooks only see Claude's tool
 calls: the founder running a command in their own terminal is never blocked.
@@ -25,7 +28,9 @@ import sys
 from pathlib import Path
 
 APPROVALS_REL = "rnd/security/approvals"
-EXCLUDE_RND = ":(exclude)rnd"
+DESIGN_INERT_EXTS = ("png", "jpg", "jpeg", "webp", "gif", "mp4", "mov", "webm", "md", "pdf")
+NON_CODE_EXCLUDES = (":(exclude)rnd", ":(exclude).business-os",
+                     *(f":(exclude,glob,icase)design/**/*.{ext}" for ext in DESIGN_INERT_EXTS))
 PROTECTED_BRANCHES = {"main", "master", "prod", "production", "release"}
 VERDICT_RE = re.compile(r"^verdict:\s*(APPROVED|APPROVED_WITH_ACCEPTED_RISK)\s*$", re.M)
 SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -123,9 +128,9 @@ def approval_problem(start_dir):
     head = git(repo, "rev-parse", "HEAD").stdout.strip()
     if not head:
         return f"אין commit ב-{repo} — אין מה לאשר."
-    dirty = git(repo, "status", "--porcelain", "--", ".", EXCLUDE_RND).stdout.strip()
+    dirty = git(repo, "status", "--porcelain", "--", ".", *NON_CODE_EXCLUDES).stdout.strip()
     if dirty:
-        return ("יש שינויים שלא נכנסו ל-commit (מחוץ ל-rnd/). אישור האבטחה מכסה קוד מחויב בלבד — "
+        return ("יש שינויים שלא נכנסו ל-commit (מחוץ ל-rnd/ ולקבצי מדיה ומסמכים ב-design/). אישור האבטחה מכסה קוד מחויב בלבד — "
                 f"יש לבצע commit ולקבל אישור על ה-commit החדש.\n{dirty[:800]}")
     for record in sorted((repo / APPROVALS_REL).glob("*.md")):
         sha = record.stem
@@ -135,7 +140,7 @@ def approval_problem(start_dir):
             return None
         if git(repo, "merge-base", "--is-ancestor", sha, head).returncode != 0:
             continue
-        changed = git(repo, "diff", "--name-only", sha, head, "--", ".", EXCLUDE_RND)
+        changed = git(repo, "diff", "--name-only", sha, head, "--", ".", *NON_CODE_EXCLUDES)
         if changed.returncode == 0 and not changed.stdout.strip():
             return None
     return (f"אין אישור אבטחה בתוקף ל-commit {head}.\n"

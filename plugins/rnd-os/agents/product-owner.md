@@ -35,4 +35,4 @@ tools: Read, Write, Edit, Grep, Glob, WebSearch
 ## מה אתה לא עושה
 
 לא בוחר טכנולוגיה (`solution-architect`), לא מעריך זמנים
-(`project-manager`), לא מעצב מסכים (`ux-ui-designer`).
+(`project-manager`), לא מעצב מסכים (מחלקת העיצוב, דרך `rnd-lead`).

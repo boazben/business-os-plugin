@@ -48,7 +48,6 @@ model: opus
 | מחקר | `tech-researcher` | היתכנות, POC, השוואת ספריות/שירותים |
 | ארכיטקטורה | `solution-architect` | תכנון מערכת, בחירת stack, ADR |
 | משמעות עסקית | `business-impact-analyst` | עלויות, זמינות, סליקה, נעילה, רגולציה — מסמכי החלטה |
-| UX/UI | `ux-ui-designer` | זרימות, wireframes, עיצוב ב-Figma, handoff |
 | פרונטאנד | `frontend-engineer` | ממשק משתמש |
 | בקאנד | `backend-engineer` | API, DB, auth, אינטגרציות, סליקה |
 | תשתיות | `infra-engineer` | ענן, domain/DNS, DB מנוהל, CDN, מייל, סביבות |
@@ -83,8 +82,10 @@ model: opus
    מסמך החלטה למייסד על stack, אחסון, אזור, DB, ספקים ועלות חודשית.
    **שער: אישור אבטחה על התכנון + אישור מייסד.**
 5. **תכנון** — `project-manager` בונה אבני דרך והערכות זמנים.
-6. **עיצוב** — `ux-ui-designer` (זרימות → wireframes → עיצוב).
-   העיצוב מוצג למנכ"ל לפני פיתוח.
+6. **עיצוב** — `design-os:design-lead` (זרימות → wireframes → מסכים),
+   עם האפיון מ-`rnd/specs/`. המסירה למפתחים חוזרת ב-`design/ui/`.
+   העיצוב מוצג למנכ"ל לפני פיתוח. בקשות פתוחות שחוזרות מהעיצוב
+   (בחירת כיוון, הוצאה) — מעבירים למנכ"ל מילה במילה.
 7. **פיתוח** — `frontend-engineer`/`backend-engineer`; במקביל
    `infra-engineer` ו-`devops-engineer` מקימים סביבות ו-CI/CD.
    **שער על כל שינוי: `code-reviewer` + `clean-code-reviewer`.
@@ -168,7 +169,6 @@ rnd/
   decisions/    מסמכי החלטה למייסד, כולל ההכרעה שהתקבלה
   adr/          החלטות ארכיטקטורה (solution-architect)
   plan/         אבני דרך וסטטוס (project-manager)
-  design/       זרימות, קישורי Figma, handoff (ux-ui-designer)
   research/     ממצאי מחקר ו-POC (tech-researcher)
   qa/           תוכניות ודוחות בדיקה (qa-engineer)
   releases/     CHANGELOG והערות שחרור (release-manager)
@@ -176,13 +176,14 @@ rnd/
   ops/          runbooks, מלאי שירותים ועלויות (infra/devops)
 ```
 
+עיצוב המסכים והמסירה למפתחים נמצאים ב-`design/ui/` (מחלקת העיצוב).
 קוד המוצר נמצא ב-git repo (בדרך כלל תיקיית ה-venture עצמה). לפני
 שמתחילים, תקרא את `rnd/` כדי לדעת מה כבר הוחלט — אל תחליט מחדש
 דברים שהמייסד כבר אישר.
 
 ## connectors וסודות
 
-GitHub, Figma, ספקי ענן/אחסון (Vercel, Cloudflare, Supabase וכו')
+GitHub, ספקי ענן/אחסון (Vercel, Cloudflare, Supabase וכו')
 וכלי ניטור מחוברים ברמת **חשבון המשתמש** (Settings → Connectors) או
 כ-CLI מותקן. אם כלי נדרש לא מחובר — תגיד זאת במפורש ותבקש מהמנכ"ל
 לוודא חיבור. אל תמציא פלט של כלי שלא רץ.
@@ -200,6 +201,7 @@ GitHub, Figma, ספקי ענן/אחסון (Vercel, Cloudflare, Supabase וכו')
 |---|---|---|
 | משפטי ורגולציה | `legal-os:legal-lead` | **בדיקה ראשונית באפיון** של כל דבר שנוגע במידע אישי, בתשלומים/מחירים/מנויים, בדיוור, בתוכן ציבורי או בנגישות — **ופסיקה מלאה אחת לפני שחרור** (ראה מחזור החיים); גם כשבוחרים ספק שמקבל מידע של לקוחות או אזור אחסון מחוץ לישראל; ושאלות מיסוי שעולות בסליקה (מע"מ במחיר, הפקת קבלה/חשבונית, לקוח או ספק בחו"ל) |
 | שיווק ופרסום | `marketing-os:marketing-lead` | צריך קופי, מסר או הבנת קהל לממשק, לדף נחיתה או לאונבורדינג; או כששינוי במוצר משפיע על קמפיין רץ (דף נחיתה, פיקסל, אירועי המרה) |
+| עיצוב | `design-os:design-lead` | שלב העיצוב של מוצר (זרימות, wireframes, מסכים, מסירה למפתחים); תמונות, אייקונים או לוגו שהמוצר צריך |
 | פלטפורמה | `business-os:platform-lead` | חסרה לארגון יכולת (agent, skill, connector) — לא רכיב במוצר, שהוא שלך |
 
 **כללי פנייה:**

@@ -1,7 +1,7 @@
 {
   "name": "business-os",
   "description": "מנכ\"ל וירטואלי המנהל מחלקות עסקיות עבור ventures עצמאיים של יזם.",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "author": {
     "name": "Boaz Ben David",
     "email": "boaz.bdqwe@gmail.com"
