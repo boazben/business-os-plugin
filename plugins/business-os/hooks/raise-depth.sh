@@ -40,6 +40,16 @@ raise_depth() {
     return
   fi
 
+  # Changing Claude's settings needs the founder's explicit, recorded consent.
+  # It lives in the plugin (consent.json, committed on request) because the
+  # plugin is the one thing Cowork re-syncs into every fresh session; a file
+  # in HOME or a userConfig value in settings.json would be wiped. See README.md.
+  consent="$(dirname "${here:-.}")/consent.json"
+  if ! grep -Eq '"raise_subagent_depth"[[:space:]]*:[[:space:]]*true' "$consent" 2>/dev/null; then
+    action="not consented: plugins/business-os/consent.json does not enable raise_subagent_depth"
+    return
+  fi
+
   real_dir=$(readlink -f "$dir" 2>/dev/null || echo "$dir")
   case "$real_dir" in
     /home/*|/mnt/*|/Users/*|/c/*|/[A-Za-z]/Users/*)
