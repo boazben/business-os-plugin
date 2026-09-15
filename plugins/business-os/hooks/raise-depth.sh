@@ -3,7 +3,7 @@
 # Cowork's sandbox starts every session with CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1,
 # so department heads cannot call their reviewers. raise_depth merges
 # env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=3 into the session's settings file,
-# which Claude Code hot-reloads, and sets $action to what it did.
+# which Claude Code hot-reloads, and sets $action (and $settings) to what it did.
 # Verified live in Cowork on 2026-09-15 (branch experiment/cowork-probe, RESULTS.md):
 # the hook process saw depth=1 before the write and depth=3 after the reload.
 #
@@ -28,16 +28,15 @@ raise_depth() {
   dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
   settings="$dir/settings.json"
 
-  # Fast path: this runs before every Bash/Read call, so skip python when a
-  # value of TARGET_DEPTH or more is already there (string or number).
-  if [ -f "$settings" ] && [ ! -L "$settings" ] \
-    && grep -Eq '"CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"[[:space:]]*:[[:space:]]*"?([3-9]|[1-9][0-9]+)"?' "$settings"; then
-    action="already set: depth>=$TARGET_DEPTH in $settings"
-    return
-  fi
-
+  # Once the raise has reached this session the hook's env no longer shows 1.
+  # That is the common case on every Bash/Read call, so answer it without
+  # python. The grep is only a hint here; nothing is written or denied on it.
   if [ "${CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH:-}" != 1 ]; then
-    action="skipped: not a capped sandbox (depth in env is '${CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH:-unset}')"
+    if [ -f "$settings" ] && grep -Eq '"CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"[[:space:]]*:[[:space:]]*"?([3-9]|[1-9][0-9]+)"?' "$settings"; then
+      action="already set: depth>=$TARGET_DEPTH in $settings"
+    else
+      action="skipped: not a capped sandbox (depth in env is '${CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH:-unset}')"
+    fi
     return
   fi
 
@@ -82,6 +81,7 @@ if current is not None and current >= depth:
     sys.exit(0)
 
 env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] = str(depth)
+tmp = None
 try:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
@@ -90,6 +90,8 @@ try:
     os.chmod(tmp, mode)
     os.replace(tmp, path)
 except OSError as exc:
+    if tmp and os.path.exists(tmp):
+        os.unlink(tmp)
     print(f"failed: could not write {path}: {exc}")
     sys.exit(0)
 print(f"merged: depth={depth} into {path}")
@@ -103,6 +105,7 @@ PY
       && mv "$settings.tmp" "$settings"; then
       action="wrote new: depth=$TARGET_DEPTH into $settings (no python3)"
     else
+      rm -f "$settings.tmp"
       action="failed: could not write $settings"
     fi
   fi

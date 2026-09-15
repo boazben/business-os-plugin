@@ -105,15 +105,25 @@ def main():
 
     path = os.path.join(home, ".business-os", "ledger.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
-    with os.fdopen(fd, "r+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        if os.fstat(f.fileno()).st_size == 0:
-            f.write(HEADER)
-        f.write(row)
-        f.flush()
-        if os.fstat(f.fileno()).st_size > MAX_BYTES:
-            trim(f, path)
+    for _ in range(5):
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "r+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            # A trim by another writer may have replaced the file while we
+            # waited for the lock; appending to the old inode would lose the row.
+            try:
+                same_file = os.fstat(f.fileno()).st_ino == os.stat(path).st_ino
+            except FileNotFoundError:
+                same_file = False
+            if not same_file:
+                continue
+            if os.fstat(f.fileno()).st_size == 0:
+                f.write(HEADER)
+            f.write(row)
+            f.flush()
+            if os.fstat(f.fileno()).st_size > MAX_BYTES:
+                trim(f, path)
+            return
 
 
 if __name__ == "__main__":
