@@ -20,6 +20,9 @@ import tempfile
 
 MAX_BYTES = 1_000_000
 EXTRA_HEADS = {"business-os:platform-lead"}
+# Unprefixed names outside this set are department agents called without their
+# plugin prefix, which Claude Code does not resolve (seen live in Cowork).
+BUILT_IN_AGENTS = {"general-purpose", "Explore", "Plan", "claude", "claude-code-guide", "statusline-setup"}
 HEADER = (
     "| time (UTC) | session | caller | target | policy | description | folder |\n"
     "|---|---|---|---|---|---|---|\n"
@@ -50,7 +53,9 @@ def policy(caller, target):
     if caller_plugin is None:
         return "ok"
     if target_plugin is None:
-        return "deviation: department agent called a built-in agent"
+        if target in BUILT_IN_AGENTS:
+            return "deviation: department agent called a built-in agent"
+        return "deviation: agent name without plugin prefix (call likely failed)"
     if is_head(caller):
         if target_plugin == caller_plugin or is_head(target):
             return "ok"
