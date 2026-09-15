@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/image-budget-guard.py",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/gemini-key-guard.py",
             "timeout": 15
           }
         ]

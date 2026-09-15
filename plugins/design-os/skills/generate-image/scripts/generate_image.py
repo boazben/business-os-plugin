@@ -1,27 +1,17 @@
 #!/usr/bin/env python3
-"""Generate or edit an image with Nano Banana (Gemini) and count it against the
-business-os monthly image budget.
+"""Generate or edit an image with Nano Banana (Gemini).
 
-Budget rules (founder decision, 2026-09-15): alert at 90% and 100% of the
-monthly budget, refuse to generate past 130%. The budget defaults to $10 — the
-Google Cloud credit bundled with the founder's Google AI Pro subscription.
+Cost is managed by the founder in Google Cloud (budget alerts on the project that
+owns the key), not by this script. Nothing about the prompt is logged.
 
-Every run reserves its estimated cost in the spend log before calling Google and
-settles the difference afterwards, so a killed or timed-out run is still
-counted. Costs are estimated from Google's published prices, not read from the
-invoice. Nothing about the prompt is logged.
-
-Where the budget and spend log live:
-- a real machine (HOME under /home, /Users, /mnt, C:\\): ~/.business-os/
-- a sandbox such as Cowork, whose HOME is wiped per session: <working folder>/.business-os/
-  when the working folder is outside HOME and /tmp (a mounted project folder);
-  otherwise paid generation is refused, because spend could not be remembered.
-BUSINESS_OS_STATE_DIR overrides both (tests; the design-os hook blocks agents from setting it).
-
-Where the API key comes from: the GEMINI_API_KEY environment variable, else the
-file gemini-api-key in that same folder (one line, the key alone). The file is
-the only way in Cowork, where nothing but the mounted project folder survives a
-session. The script keeps it out of git with <folder>/.gitignore and warns if git
+Where the API key comes from, first match wins:
+1. the GEMINI_API_KEY environment variable;
+2. a file named gemini-api-key (one line, the key alone) in a .business-os folder:
+   BUSINESS_OS_STATE_DIR (tests), ~/.business-os, <working folder>/.business-os,
+   a project folder staged into a Cowork cloud session
+   (/mnt/user-data/uploads/*/.business-os), or a connected folder seen from the
+   Cowork device VM ($HOME/mnt/*/.business-os).
+The script keeps the file out of git with .business-os/.gitignore and warns if git
 already tracks it. The key is sent to Google in a header and never printed; the
 design-os hook blocks agents from reading the file.
 
@@ -30,7 +20,7 @@ Usage:
                       [--size 1K|2K|4K] [--aspect 1:1] [--ref img.png ...]
     generate_image.py --status
 
-Exit codes: 0 ok, 2 error, 3 blocked by budget (or no place to keep the meter).
+Exit codes: 0 ok, 2 error.
 """
 import argparse
 import base64
@@ -43,46 +33,29 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-import uuid
-from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import NoReturn
 
-try:
-    import fcntl
-except ImportError:  # Windows: no lock, the budget check still runs
-    fcntl = None
-
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
-DEFAULT_BUDGET_USD = 10.0
-ALERT_LEVEL = 0.9
-BLOCK_LEVEL = 1.3
-REAL_MACHINE_HOME_RE = re.compile(r"^(/home/|/mnt/|/Users/|/c/|/[A-Za-z]/Users/|[A-Za-z]:\\)")
 KEY_ENV = "GEMINI_API_KEY"
 KEY_FILE = "gemini-api-key"
+STATE_FOLDER = ".business-os"
 KEY_RE = re.compile(r"[A-Za-z0-9_\-]{20,}")
+COWORK_UPLOADS = Path("/mnt/user-data/uploads")
 
-# Official Gemini API paid-tier prices, checked 2026-09-15: per output image, and
-# per 1M tokens for input and for text/thinking output.
 MODELS = {
-    "pro": {"id": "gemini-3-pro-image", "image": {"1K": 0.134, "2K": 0.134, "4K": 0.24},
-            "input_per_m": 2.00, "text_per_m": 12.00, "thinking_allowance": 0.015},
-    "flash": {"id": "gemini-3.1-flash-image", "image": {"1K": 0.067, "2K": 0.101, "4K": 0.151},
-              "input_per_m": 0.50, "text_per_m": 3.00, "thinking_allowance": 0.004},
-    "lite": {"id": "gemini-3.1-flash-lite-image", "image": {"1K": 0.0336},
-             "input_per_m": 0.25, "text_per_m": 1.50, "thinking_allowance": 0.002},
+    "pro": {"id": "gemini-3-pro-image", "sizes": ("1K", "2K", "4K")},
+    "flash": {"id": "gemini-3.1-flash-image", "sizes": ("1K", "2K", "4K")},
+    "lite": {"id": "gemini-3.1-flash-lite-image", "sizes": ("1K",)},
 }
-# Used only when the response carries no usage block.
-REF_ALLOWANCE_USD = 0.003
 MAX_REFS = 14
 ASPECTS = ("1:1", "3:2", "2:3", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9")
 OUT_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 
 
-def fail(message, code=2) -> NoReturn:
+def fail(message) -> NoReturn:
     print(message, file=sys.stderr)
-    sys.exit(code)
+    sys.exit(2)
 
 
 def real_home():
@@ -93,25 +66,32 @@ def real_home():
         return Path.home()
 
 
-def state_dir():
-    """Folder for the budget and spend log, or None when nothing would persist."""
+def key_folders():
+    """.business-os folders that may hold the key file, in lookup order, without duplicates."""
     override = os.environ.get("BUSINESS_OS_STATE_DIR")
     if override:
-        return Path(override)
-    home = real_home()
-    if REAL_MACHINE_HOME_RE.match(str(home)):
-        return home / ".business-os"
-    cwd = Path.cwd().resolve()
-    if cwd != home and home not in cwd.parents and cwd.parts[:2] != ("/", "tmp"):
-        return cwd / ".business-os"
-    return None
+        return [Path(override)]
+    homes = {real_home(), Path.home()}
+    candidates = [home / STATE_FOLDER for home in homes] + [Path.cwd() / STATE_FOLDER]
+    for root in [COWORK_UPLOADS] + [home / "mnt" for home in homes]:
+        try:
+            candidates += sorted(p / STATE_FOLDER for p in root.iterdir() if p.is_dir())
+        except OSError:
+            continue
+    seen, folders = set(), []
+    for folder in candidates:
+        resolved = str(folder.resolve()) if folder.exists() else str(folder)
+        if resolved not in seen:
+            seen.add(resolved)
+            folders.append(folder)
+    return folders
 
 
-def protect_key_file(state):
-    """Best effort: make <state>/.gitignore name the key file, so `git add -A` skips it."""
-    if not state.is_dir():
+def protect_key_file(folder):
+    """Best effort: make <folder>/.gitignore name the key file, so `git add -A` skips it."""
+    if not folder.is_dir():
         return
-    ignore = state / ".gitignore"
+    ignore = folder / ".gitignore"
     try:
         text = ignore.read_text() if ignore.exists() else ""
         if KEY_FILE not in (line.strip() for line in text.splitlines()):
@@ -121,34 +101,25 @@ def protect_key_file(state):
         pass
 
 
-def key_tracked_by_git(state):
+def key_tracked_by_git(folder):
     try:
-        result = subprocess.run(["git", "ls-files", "--error-unmatch", KEY_FILE], cwd=state,
+        result = subprocess.run(["git", "ls-files", "--error-unmatch", KEY_FILE], cwd=folder,
                                 capture_output=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return False
     return result.returncode == 0
 
 
-def load_key(state):
-    """(key, where it came from, problem) — environment first, then <state>/gemini-api-key."""
-    key = os.environ.get(KEY_ENV, "").strip()
-    if key:
-        return key, f"משתנה הסביבה {KEY_ENV}", None
-    if state is None:
-        return "", None, None
-    protect_key_file(state)
-    path = state / KEY_FILE
+def read_key_file(path):
+    """(key, problem) from one key file."""
     try:
         raw = path.read_bytes()
-    except FileNotFoundError:
-        return "", None, None
     except OSError:
-        return "", None, f"קובץ המפתח {path} קיים אבל לא נפתח."
+        return "", f"קובץ המפתח {path} קיים אבל לא נפתח."
     try:
         text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        return "", None, f"קובץ המפתח {path} לא קריא — שומרים אותו כטקסט רגיל (UTF-8)."
+        return "", f"קובץ המפתח {path} לא קריא — שומרים אותו כטקסט רגיל (UTF-8)."
     lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
     value = lines[0] if lines else ""
     if "=" in value:  # tolerate GEMINI_API_KEY=... pasted as is
@@ -156,90 +127,38 @@ def load_key(state):
     # Quotes, spaces and invisible marks a copy from a browser or a Hebrew UI can add.
     value = "".join(ch for ch in value if ch.isascii() and ch.isprintable() and not ch.isspace()).strip("\"'")
     if not KEY_RE.fullmatch(value):
-        return "", None, f"קובץ המפתח {path} קיים, אבל התוכן לא נראה כמו מפתח. צריך שורה אחת, רק המפתח."
-    return value, f"הקובץ {path}", None
+        return "", f"קובץ המפתח {path} קיים, אבל התוכן לא נראה כמו מפתח. צריך שורה אחת, רק המפתח."
+    return value, None
 
 
-def missing_key_message(state, problem=None):
-    return (f"חסר מפתח Gemini — לא נוצרה תמונה. {problem + ' ' if problem else ''}המייסד שם את המפתח, מחוץ "
-            f"לשיחה, בקובץ {state / KEY_FILE} (שורה אחת, רק המפתח) או במשתנה הסביבה {KEY_ENV}. "
-            "לא מבקשים את המפתח בצ'אט.")
+def load_key():
+    """(key, source, folder, problem). source is a Hebrew description; folder is set for a key file."""
+    key = os.environ.get(KEY_ENV, "").strip()
+    if key:
+        return key, f"משתנה הסביבה {KEY_ENV}", None, None
+    problem = None
+    for folder in key_folders():
+        path = folder / KEY_FILE
+        if not path.is_file():
+            continue
+        protect_key_file(folder)
+        value, problem = read_key_file(path)
+        if value:
+            return value, f"הקובץ {path}", folder, None
+    return "", None, None, problem
 
 
-def tracked_key_warning(state, source):
-    if source and source.startswith("הקובץ") and key_tracked_by_git(state):
+def missing_key_message(problem=None):
+    return (f"חסר מפתח Gemini — לא נוצרה תמונה. {problem + ' ' if problem else ''}"
+            f"המייסד שם את המפתח, מחוץ לשיחה, בקובץ {STATE_FOLDER}/{KEY_FILE} בתיקיית הפרויקט "
+            f"(שורה אחת, רק המפתח) או במשתנה הסביבה {KEY_ENV}. לא מבקשים את המפתח בצ'אט.")
+
+
+def tracked_key_warning(folder):
+    if folder is not None and key_tracked_by_git(folder):
         return ("⚠️ קובץ המפתח נמצא ב-git. המייסד צריך להוציא אותו מה-repo ולהחליף את המפתח ב-Google Cloud "
                 "— חסם בראש הדיווח.")
     return None
-
-
-def load_budget(state):
-    budget_file = state / "image-budget.json"
-    if not budget_file.exists():
-        return DEFAULT_BUDGET_USD
-    try:
-        value = float(json.loads(budget_file.read_text())["monthly_budget_usd"])
-        if value > 0:
-            return value
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    print(f"קובץ התקציב {budget_file} לא תקין — משתמשים בברירת המחדל {DEFAULT_BUDGET_USD:.2f}$.",
-          file=sys.stderr)
-    return DEFAULT_BUDGET_USD
-
-
-def month_key():
-    return datetime.now(timezone.utc).strftime("%Y-%m")
-
-
-def month_spend(state, month):
-    total, images = 0.0, 0
-    try:
-        lines = (state / "image-spend.jsonl").read_text().splitlines()
-    except FileNotFoundError:
-        return total, images
-    for line in lines:
-        try:
-            record = json.loads(line)
-            if record.get("month") == month:
-                total += float(record.get("cost_usd") or 0)
-                images += int(record.get("images") or 0)
-        except (ValueError, TypeError, AttributeError):
-            continue
-    return total, images
-
-
-def budget_line(spent, budget):
-    summary = f"{spent:.2f}$ מתוך {budget:.2f}$ החודש ({spent / budget * 100:.0f}%)"
-    if spent >= budget * BLOCK_LEVEL:
-        return (f"⛔ תקציב תמונות: {summary} — הגענו ל-130%. יצירת תמונות בתשלום חסומה "
-                "עד סוף החודש, או עד שהמייסד מגדיל את התקציב.")
-    if spent >= budget:
-        return (f"⚠️ תקציב תמונות: {summary} — עברנו את התקציב החודשי. "
-                f"חסימה ב-130% ({budget * BLOCK_LEVEL:.2f}$).")
-    if spent >= budget * ALERT_LEVEL:
-        return f"⚠️ תקציב תמונות: {summary} — עברנו 90% מהתקציב החודשי."
-    return f"תקציב תמונות: {summary}."
-
-
-@contextmanager
-def spend_lock(state):
-    state.mkdir(parents=True, exist_ok=True)
-    if fcntl is None:
-        yield
-        return
-    with open(state / "image-spend.lock", "w") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
-
-
-def append_record(state, record):
-    record = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **record}
-    with open(state / "image-spend.jsonl", "a") as log:
-        log.write(json.dumps(record) + "\n")
 
 
 def model_output_items(response, kind):
@@ -249,19 +168,6 @@ def model_output_items(response, kind):
             for item in step.get("content") or []:
                 if isinstance(item, dict) and item.get("type") == kind:
                     yield item
-
-
-def token_cost(usage, model):
-    """Input, thinking and text-output cost from the usage block, or None if absent."""
-    if not isinstance(usage, dict):
-        return None
-    try:
-        text_tokens = sum(float(m.get("tokens") or 0) for m in usage.get("output_tokens_by_modality") or []
-                          if str(m.get("modality", "")).lower() == "text")
-        return (float(usage.get("total_input_tokens") or 0) * model["input_per_m"]
-                + (float(usage.get("total_thought_tokens") or 0) + text_tokens) * model["text_per_m"]) / 1e6
-    except (TypeError, ValueError, AttributeError):
-        return None
 
 
 def api_error_message(body):
@@ -274,13 +180,11 @@ def api_error_message(body):
 
 
 class ApiError(Exception):
-    def __init__(self, message, billed_maybe):
-        super().__init__(message)
-        self.billed_maybe = billed_maybe
+    pass
 
 
 def call_api(key, payload):
-    """Return the Interaction; raise ApiError, noting whether Google may have billed."""
+    """Return the Interaction; raise ApiError with a Hebrew message."""
     request = urllib.request.Request(
         ENDPOINT,
         data=json.dumps(payload).encode(),
@@ -291,16 +195,16 @@ def call_api(key, payload):
         with urllib.request.urlopen(request, timeout=300) as response:
             data = json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        message = f"ה-API של Google החזיר שגיאה {exc.code}: {api_error_message(exc.read().decode(errors='replace'))}"
-        raise ApiError(message, billed_maybe=exc.code >= 500) from exc
+        raise ApiError(f"ה-API של Google החזיר שגיאה {exc.code}: "
+                       f"{api_error_message(exc.read().decode(errors='replace'))}") from exc
     except UnicodeEncodeError as exc:  # a character that cannot go in an HTTP header; nothing was sent
-        raise ApiError("המפתח מכיל תווים לא תקינים — לא נשלחה בקשה ל-Google.", billed_maybe=False) from exc
+        raise ApiError("המפתח מכיל תווים לא תקינים — לא נשלחה בקשה ל-Google.") from exc
     except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException, OSError) as exc:
-        raise ApiError(f"אין תשובה מלאה מ-Google ({exc}).", billed_maybe=True) from exc
+        raise ApiError(f"אין תשובה מלאה מ-Google ({exc}). אם זו חסימת רשת בסביבה — זה חסם בראש הדיווח.") from exc
     except ValueError as exc:
-        raise ApiError("ה-API של Google החזיר תשובה שאינה JSON.", billed_maybe=True) from exc
+        raise ApiError("ה-API של Google החזיר תשובה שאינה JSON.") from exc
     if not isinstance(data, dict):
-        raise ApiError("ה-API של Google החזיר תשובה לא צפויה.", billed_maybe=True)
+        raise ApiError("ה-API של Google החזיר תשובה לא צפויה.")
     return data
 
 
@@ -331,100 +235,47 @@ def save_images(images, out):
     return saved
 
 
-def no_meter_message():
-    return ("⛔ תקציב תמונות: אין כאן מקום שבו אפשר לזכור את ההוצאות בין שיחות (למשל Cowork בלי תיקיית "
-            "פרויקט מחוברת). לא נוצרה תמונה. פותחים את השיחה מתוך תיקיית ה-venture, או ממשיכים בכלים חינמיים.")
-
-
 def status():
-    state = state_dir()
-    if state is None:
-        print(no_meter_message())
-        return
-    budget = load_budget(state)
-    spent, images = month_spend(state, month_key())
-    print(f"החודש ({month_key()}, UTC): {images} תמונות. מונה: {state}")
-    _, source, problem = load_key(state)
-    print(f"מפתח Gemini: נמצא — {source}." if source else missing_key_message(state, problem))
-    warning = tracked_key_warning(state, source)
+    _, source, folder, problem = load_key()
+    print(f"מפתח Gemini: נמצא — {source}." if source else missing_key_message(problem))
+    warning = tracked_key_warning(folder)
     if warning:
         print(warning)
-    print(budget_line(spent, budget))
 
 
 def generate(args):
     model = MODELS[args.model]
-    prices = model["image"]
-    if args.size not in prices:
-        fail(f"המודל {args.model} לא תומך בגודל {args.size}. גדלים אפשריים: {', '.join(prices)}.")
+    if args.size not in model["sizes"]:
+        fail(f"המודל {args.model} לא תומך בגודל {args.size}. גדלים אפשריים: {', '.join(model['sizes'])}.")
     if Path(args.out).suffix.lower() not in OUT_MIME:
         fail(f"סיומת קובץ לא נתמכת: {args.out} (png, jpg, webp).")
     if len(args.ref) > MAX_REFS:
         fail(f"יותר מדי קבצי ייחוס ({len(args.ref)}); המקסימום {MAX_REFS}.")
-    state = state_dir()
-    if state is None:
-        print(no_meter_message())
-        sys.exit(3)
-    key, source, problem = load_key(state)
+    key, _, folder, problem = load_key()
     if not key:
-        fail(missing_key_message(state, problem))
-    warning = tracked_key_warning(state, source)
+        fail(missing_key_message(problem))
+    warning = tracked_key_warning(folder)
     if warning:
         print(warning)
 
-    payload = build_payload(args, model["id"])
-    fallback_tokens = REF_ALLOWANCE_USD * len(args.ref) + model["thinking_allowance"]
-    estimate = prices[args.size] + fallback_tokens
-    budget = load_budget(state)
-    month, run_id = month_key(), uuid.uuid4().hex
-
-    with spend_lock(state):
-        spent, _ = month_spend(state, month)
-        if spent + estimate > budget * BLOCK_LEVEL:
-            print(f"⛔ תקציב תמונות: {spent:.2f}$ מתוך {budget:.2f}$ החודש — התמונה הזו (~{estimate:.3f}$) "
-                  f"הייתה עוברת את 130% ({budget * BLOCK_LEVEL:.2f}$). לא נוצרה תמונה. "
-                  "המשך רק בכלים חינמיים, או שהמייסד מגדיל את התקציב.")
-            sys.exit(3)
-        append_record(state, {"month": month, "kind": "reserve", "id": run_id, "model": model["id"],
-                              "size": args.size, "refs": len(args.ref), "cost_usd": round(estimate, 4),
-                              "images": 0, "cwd": os.getcwd()})
-
     try:
-        response = call_api(key, payload)
+        response = call_api(key, build_payload(args, model["id"]))
     except ApiError as exc:
-        with spend_lock(state):
-            if not exc.billed_maybe:
-                append_record(state, {"month": month, "kind": "refund", "id": run_id, "cost_usd": -round(estimate, 4), "images": 0})
-            spent, _ = month_spend(state, month)
-        note = " ההוצאה נספרה לפי הערכה, כי לא ברור אם Google חייב." if exc.billed_maybe else ""
-        print(f"{exc}{note}", file=sys.stderr)
-        print(budget_line(spent, budget))
-        sys.exit(2)
+        fail(str(exc))
 
     images = [i for i in model_output_items(response, "image") if isinstance(i.get("data"), str)]
-    tokens = token_cost(response.get("usage"), model)
-    cost = prices[args.size] * len(images) + (fallback_tokens if tokens is None else tokens)
-    with spend_lock(state):
-        append_record(state, {"month": month, "kind": "settle", "id": run_id, "status": response.get("status"),
-                              "images": len(images), "cost_usd": round(cost - estimate, 4)})
-        spent, _ = month_spend(state, month)
-
     if not images:
         reply = " ".join(i["text"] for i in model_output_items(response, "text") if isinstance(i.get("text"), str)).strip()
-        print(f"לא נוצרה תמונה (status: {response.get('status')}).{' תשובת המודל: ' + reply[:500] if reply else ''}",
-              file=sys.stderr)
-        print(budget_line(spent, budget))
-        sys.exit(2)
+        fail(f"לא נוצרה תמונה (status: {response.get('status')}).{' תשובת המודל: ' + reply[:500] if reply else ''}")
 
     for path in save_images(images, Path(args.out)):
         print(f"נשמר: {path}")
-    print(f"מודל {model['id']}, {args.size}, {args.aspect} — עלות משוערת {cost:.3f}$.")
-    print(budget_line(spent, budget))
+    print(f"מודל {model['id']}, {args.size}, {args.aspect}.")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Nano Banana image generation with a monthly budget.")
-    parser.add_argument("--status", action="store_true", help="print this month's spend and exit")
+    parser = argparse.ArgumentParser(description="Nano Banana image generation.")
+    parser.add_argument("--status", action="store_true", help="say whether a Gemini key was found, and where")
     parser.add_argument("--prompt")
     parser.add_argument("--out", help="output file (.png, .jpg, .webp)")
     parser.add_argument("--model", choices=sorted(MODELS), default="flash")
