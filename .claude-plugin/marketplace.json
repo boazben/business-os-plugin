@@ -8,7 +8,7 @@
     {
       "name": "business-os",
       "source": "./plugins/business-os",
-      "version": "0.1.25"
+      "version": "0.1.26"
     },
     {
       "name": "marketing-os",
@@ -18,7 +18,7 @@
     {
       "name": "rnd-os",
       "source": "./plugins/rnd-os",
-      "version": "0.1.13"
+      "version": "0.1.14"
     },
     {
       "name": "legal-os",
