@@ -13,7 +13,7 @@
     {
       "name": "marketing-os",
       "source": "./plugins/marketing-os",
-      "version": "0.1.10"
+      "version": "0.1.11"
     },
     {
       "name": "rnd-os",
