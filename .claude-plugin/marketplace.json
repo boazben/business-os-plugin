@@ -23,7 +23,7 @@
     {
       "name": "legal-os",
       "source": "./plugins/legal-os",
-      "version": "0.1.9"
+      "version": "0.1.10"
     },
     {
       "name": "design-os",
