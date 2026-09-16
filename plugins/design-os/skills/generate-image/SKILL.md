@@ -34,7 +34,10 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/generate_image.py --prompt "..." --model fla
 - `--size`: 1K, 2K, 4K (`lite` — 1K בלבד).
 - `--out` — **‎.jpg בלבד** (Google מחזיר רק JPEG), נתיב יחסי לתיקיית
   ה-venture. אם המודל מחזיר כמה תמונות, הנוספות נשמרות כ-`<name>-2.jpg` וכו'.
-  צריך PNG או רקע שקוף — מייצאים מ-Canva.
+  צריך PNG — ייצוא מ-Canva (התוכנית החינמית מייצאת PNG, JPG ו-PDF).
+  צריך **רקע שקוף או וקטור (SVG)** — Nano Banana לא מייצר אותם. בתוכנית
+  החינמית של Canva גם אין ייצוא שקוף או SVG, ולכן כותבים SVG ביד
+  (`brand-identity-designer`). אם המייסד אומר שיש Canva Pro — מייצאים משם.
 - `--ref <קובץ>` — תמונת ייחוס או תמונה לעריכה; אפשר כמה פעמים (עד 14).
   עריכה = `--ref` לתמונה הקיימת + תיאור השינוי ב-`--prompt`.
 
