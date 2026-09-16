@@ -36,16 +36,19 @@ It runs before every Notion MCP tool call (any tool name starting with `mcp__` t
 
 - **Only the founder approves board tasks.** `מאושר` (approved) is set by the founder in Notion's own UI, where no hook runs.
 - **No session changes the board's structure.** The structure lives in `skills/notion-board/registry.json` and its SKILL.md; ad-hoc boards are what the contract replaced.
+- **Two tool families.** The Notion connector (`notion-update-page`, flat values) and the Notion REST API exposed by a local Notion MCP server (`API-patch-page`, `API-post-page`, nested values such as `{"status": {"name": "..."}}`). The local server must be registered under a name containing `notion`, or the `hooks.json` matcher does not see it.
 - **It blocks** a call that would:
-  - set a status-like property (name contains `סטטוס` or `status`) to a value containing `אושר`, `מאשר` or `approved`, or any other property to exactly one of those words. Values are compared letters-only: niqqud, emoji, punctuation, spaces and invisible characters are dropped first;
-  - create a database (`create-database`), change any data source's columns, options or trash state (`update-data-source`);
+  - set a status-like property (name contains `סטטוס` or `status`) to a value containing `אושר`, `מאשר` or `approved`, or any other property to exactly one of those words, at any depth of the value. Values are compared letters-only: niqqud, emoji, punctuation, spaces and invisible characters are dropped first;
+  - set a status-like property by option `id` only (the option could be `מאושר`);
+  - create a database (`create-database`, `create-a-database`), change a database or data source's columns, options or trash state (`update-data-source`, `update-a-database`, `update-a-data-source`);
   - create a page without a `parent` (a loose page instead of a board row);
-  - move or duplicate pages (`move-pages`, `duplicate-page`; a copy of an approved task is approved);
+  - move, duplicate or trash pages (`move-pages`, `move-page`, `duplicate-page`, `in_trash`/`archived` true; a copy of an approved task is approved);
   - hand work to Notion AI (`spawn-session`, `send-message-to-session`), which could do any of the above for Claude.
+- **Tests:** `hooks/tests/test_board_gate.py` — run with `python3`. Add a case for every new bypass.
 - **It allows** everything else: reads, comments, creating rows under a parent, updating statuses other than approved, page content and result text that mention the word.
 - **Why a denylist, not an allowlist of statuses:** the hook sees every Notion database the founder uses. An allowlist would block status updates in all of them.
 - **Fails closed:** if `python3` is missing or the check fails, a Notion call that mentions those words, or is one of the structure tools, is blocked. A hook timeout still lets the call through (Claude Code behaviour), so the check stays local and fast.
 - **Changing the structure** is done by the founder in Notion, or in a development session where this plugin is not loaded, followed by an update to `registry.json` and SKILL.md.
 - **Known limits:**
-  - A different Notion MCP server with other tool names (for example `API-patch-page`), or a Notion token reachable from Bash, is not covered.
+  - A Notion token reachable from Bash (for example `curl api.notion.com`) is not covered — the hook only sees Notion tool calls. An unattended runner must keep its Notion credential out of the agent's shell, and "מאושר" is never the gate for anything that reaches customers: going live is the founder's click at the hosting provider.
   - The connector acts as the founder's own account, so Notion's "last edited by" cannot tell a Claude edit from the founder's. The hook is the control, not Notion's history.

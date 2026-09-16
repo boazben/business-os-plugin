@@ -8,17 +8,27 @@ the call would:
   schema is the contract in skills/notion-board; renaming an option to
   "approved" would approve every task that had the old one);
 - create a page without a parent (a loose page instead of a board row);
-- move or duplicate pages (a copy of an approved task is an approved task);
+- move, duplicate or trash pages (a copy of an approved task is an approved
+  task; the board keeps its history);
 - hand work to Notion's own AI agent, which could do any of this for Claude.
 Exits 0 otherwise. Any other exit code means the check itself failed;
 board-gate.sh then falls back to a coarser text match instead of allowing.
 
+Two tool families are understood: the Notion connector (notion-update-page,
+flat property values) and the Notion REST API as exposed by a local Notion MCP
+server (API-patch-page and friends, nested values such as
+{"status": {"name": "..."}}). A status set only by option id cannot be read,
+so it is blocked.
+
 Why a denylist of approved words rather than an allowlist of statuses: the hook
 sees every Notion database the founder uses, not only the board, and an
 allowlist would block status updates in all of them.
+
+Tests: hooks/tests/test_board_gate.py.
 """
 
 import json
+import re
 import sys
 import unicodedata
 
@@ -28,21 +38,22 @@ STATUS_NAMES = ("סטטוס", "status")
 APPROVED_PARTS = ("אושר", "מאשר", "approved")
 # Exact values that mean "approved" in any other property.
 APPROVED_VALUES = {"מאושר", "מאושרת", "אושר", "אושרה", "מאשר", "approved"}
-STRUCTURE_TOOLS = (
-    "create-database",
-    "update-data-source",
-    "move-pages",
-    "duplicate-page",
-    "spawn-session",
-    "send-message-to-session",
+
+# Tool names are compared lowercased with "_" turned into "-".
+STRUCTURE_RE = re.compile(
+    r"(create-database|update-data-source|move-pages|duplicate-page|spawn-session|send-message-to-session"
+    r"|create-a-database|update-a-database|create-a-data-source|update-a-data-source|move-page)$"
 )
+CREATE_PAGE_RE = re.compile(r"(create-pages|post-page|create-a-page)$")
+UPDATE_PAGE_RE = re.compile(r"(update-page|patch-page|update-a-page)$")
+TRASH_KEYS = ("in_trash", "archived")
 
 MESSAGE = (
     "business-os: this Notion call is outside the board contract "
     "(skill business-os:notion-board). Claude does not set a task to 'מאושר' "
     "(only the founder approves, in Notion itself), create databases, change "
-    "a database's columns or options, create pages without a parent, move or "
-    "duplicate pages, or hand work to Notion AI. Leave approvals at "
+    "a database's columns or options, create pages without a parent, move, "
+    "duplicate or trash pages, or hand work to Notion AI. Leave approvals at "
     "'ממתין לאישור' and tell the founder what change is needed."
 )
 
@@ -56,11 +67,23 @@ def letters(text):
 
 
 def strings(value):
+    """Every string inside a value, at any depth (REST values are nested)."""
     if isinstance(value, str):
         yield value
     elif isinstance(value, list):
         for item in value:
             yield from strings(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from strings(item)
+
+
+def has_key(value, key):
+    if isinstance(value, dict):
+        return key in value or any(has_key(v, key) for v in value.values())
+    if isinstance(value, list):
+        return any(has_key(v, key) for v in value)
+    return False
 
 
 def approves(properties):
@@ -73,6 +96,9 @@ def approves(properties):
         return False
     for name, value in properties.items():
         is_status = any(s in letters(name) for s in STATUS_NAMES)
+        # {"status": {"id": "abc"}} names no option — it could be מאושר.
+        if is_status and isinstance(value, (dict, list)) and has_key(value, "id") and not has_key(value, "name"):
+            return True
         for text in strings(value):
             clean = letters(text)
             if clean in APPROVED_VALUES:
@@ -94,15 +120,29 @@ def any_properties_approve(node):
     return False
 
 
+def trashes(node):
+    if isinstance(node, dict):
+        return any(node.get(k) is True for k in TRASH_KEYS) or any(trashes(v) for v in node.values())
+    if isinstance(node, list):
+        return any(trashes(v) for v in node)
+    return False
+
+
 def blocked(tool, tool_input):
-    if tool.endswith(STRUCTURE_TOOLS):
+    if STRUCTURE_RE.search(tool):
         return True
+    if isinstance(tool_input, str):
+        try:
+            tool_input = json.loads(tool_input)
+        except ValueError:
+            return False
     if not isinstance(tool_input, dict):
         return False
-    if tool.endswith("create-pages") and not tool_input.get("parent"):
+    creating = bool(CREATE_PAGE_RE.search(tool))
+    if creating and not tool_input.get("parent"):
         return True
-    if tool.endswith(("create-pages", "update-page")):
-        return any_properties_approve(tool_input)
+    if creating or UPDATE_PAGE_RE.search(tool):
+        return trashes(tool_input) or any_properties_approve(tool_input)
     return False
 
 
