@@ -1,7 +1,7 @@
 {
   "name": "design-os",
   "description": "מחלקת עיצוב — זהות מותג (לוגו, צבעים, גופנים, ספר מותג), עיצוב מסכים (UX/UI), תמונות, מודעות, תבניות ווידאו קצר, ועקביות המותג בכל תוצר.",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "author": {
     "name": "Boaz Ben David",
     "email": "boaz.bdqwe@gmail.com"

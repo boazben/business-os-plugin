@@ -35,8 +35,8 @@ disallowedTools: Agent
 4. גיבוי DB טרי לפני מיגרציה.
 5. הגבול בין הקוד ללקוחות קיים: עברת על ה-skill
    `rnd-os:production-protection` והבדיקות שלו עוברות. אין במחשב
-   התחברות ל-Vercel CLI או token של production. אתה לא מקדם לאוויר:
-   push ל-`main` יוצר גרסה Staged, והמייסד לוחץ Promote. אם מצאת
+   התחברות ל-CLI של ספק האחסון או token של production. אתה לא מעלה
+   לאוויר: מיזוג ל-`main` בונה גרסה שמחכה, והמייסד לוחץ Publish. אם מצאת
    הרשאה כזו במחשב, זה ממצא ל-`security-lead`, לא קיצור דרך.
 6. מיזוג PR לענף מוגן נעשה רק כשהוא נקשר ל-commit המאושר:
    `gh pr merge <n> --match-head-commit <sha מאושר>`. בלי זה ה-hook חוסם,
