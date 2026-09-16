@@ -8,12 +8,12 @@
     {
       "name": "business-os",
       "source": "./plugins/business-os",
-      "version": "0.1.18"
+      "version": "0.1.19"
     },
     {
       "name": "marketing-os",
       "source": "./plugins/marketing-os",
-      "version": "0.1.10"
+      "version": "0.1.11"
     },
     {
       "name": "rnd-os",
