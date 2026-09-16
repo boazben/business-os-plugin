@@ -18,7 +18,7 @@
     {
       "name": "rnd-os",
       "source": "./plugins/rnd-os",
-      "version": "0.1.8"
+      "version": "0.1.9"
     },
     {
       "name": "legal-os",
@@ -28,7 +28,7 @@
     {
       "name": "design-os",
       "source": "./plugins/design-os",
-      "version": "0.1.7"
+      "version": "0.1.11"
     }
   ]
 }
