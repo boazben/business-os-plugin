@@ -1,84 +1,106 @@
 ---
 name: production-protection
-description: הגבול האמיתי בין הקוד לבין האתר החי — צ'קליסט של לחיצות מייסד ב-Vercel ובדיקות ש-devops-engineer מריץ, כך ש-Claude לבד לא יכול להעלות שום דבר לאוויר. להשתמש כשנפתח repo ראשון ל-venture, לפני ה-deploy הראשון ל-production, וכל פעם שמחברים שירות חדש שמחזיק מידע של לקוחות או כסף (מסד נתונים, סליקה).
+description: הגבול האמיתי בין הקוד לבין האתר החי, על Netlify — צ'קליסט של לחיצות מייסד, שלוש בדיקות שמוכיחות שהשער מחזיק, מה devops-engineer בודק, ואיך נראה שחרור, חזרה אחורה והשקה. להשתמש כשנפתח repo ל-venture, לפני הפרסום הראשון, כשמשנים את `netlify.toml` או מוסיפים build plugin, וכל פעם שמחברים שירות שמחזיק מידע של לקוחות או כסף.
 ---
 
-# הגנה על production
+# הגנה על production — Netlify
 
-> **ספק האחסון עוד לא נבחר** (משימה בלוח: "לבחור ספק אחסון וענן"). **Vercel
-> בחינם (Hobby) אוסר שימוש מסחרי** — לא מעלים עליו אתר שמוכר. הצ'קליסט למטה
-> נכתב ל-Vercel ויוחלף אחרי ההחלטה. **העיקרון לא משתנה בשום ספק:** מיזוג
-> ל-`main` בונה גרסה שמחכה, רק המייסד מפרסם בממשק של הספק, אין במחשב טוקן
-> או התחברות לספק, וגרסה שלא פורסמה לא נגישה לציבור.
+**ספק האחסון: Netlify, תוכנית Personal (9$ לחודש).** החלטת מייסד 16.9.2026,
+מסמך `מו״פ/החלטות/01 - בחירת ספק אחסון וענן.md` בתיקיית הפרויקט.
+Vercel בחינם אוסר שימוש מסחרי; Cloudflare Pages לא נותן פרסום ידני מ-Git;
+ענן גדול — אין תקרת חיוב אמיתית. **העיקרון לא תלוי בספק:** מיזוג ל-`main`
+בונה גרסה שמחכה, רק המייסד מפרסם בממשק, אין במחשב טוקן או התחברות לספק,
+וגרסה שלא פורסמה לא נגישה לציבור.
 
 ## למה זה קיים
 
-ה-hook של rnd-os (`hooks/security-gate.py`) עוצר טעויות ועקיפות מוכרות:
-deploy בלי אישור אבטחה, כתיבת אישור על ידי מי שאינו `security-lead`, שינוי
-הגדרות הגנה. הוא **לא** גבול אבטחה. כל הסוכנים חולקים את אותו מחשב ואותו
-shell, וסוכן נחוש יכול להגיע ל-production בדרך שאף רשימת דפוסים לא רואה.
+ה-hook של rnd-os (`hooks/security-gate.py`) עוצר טעויות ועקיפות מוכרות. הוא
+**לא** גבול אבטחה: כל הסוכנים חולקים מחשב ו-shell. הגבול האמיתי: **Claude
+לא מחזיק שום הרשאה שמעלה משהו לאוויר**, והעלייה לאוויר היא לחיצה של המייסד
+בממשק של Netlify, עם החשבון שלו.
 
-הגבול האמיתי: **Claude לא מחזיק שום הרשאה שמעלה משהו לאוויר.** העלייה
-לאוויר היא לחיצה של המייסד, בממשק, עם הסיסמה שלו.
+## הצ'קליסט של המייסד (פעם אחת ל-repo)
 
-## מה נבדק (15.9.2026, בתיעוד הרשמי)
+1. **2FA** על GitHub ועל Netlify.
+2. **הרשמה ל-Netlify עם GitHub.** בהרשאת האפליקציה של Netlify ב-GitHub —
+   **Only select repositories**, רק ה-repo של האתר.
+3. **Add new project → Import an existing project → GitHub → ה-repo.**
+   Build command ריק, Publish directory `.` (שורש ה-repo). Deploy.
+4. **Project configuration → General → Visitor access → Project visibility:
+   Private** — עד ההשקה. בתוכנית Free/Personal רק בעל הצוות רואה.
+5. **Deploys → Lock to stop auto publishing.** מעכשיו כל push ל-`main` נבנה
+   ומחכה.
+6. **Project configuration → Build & deploy → Continuous deployment →
+   Branches and deploy contexts:** Branch deploys — רק ענף ה-production;
+   Deploy Previews — לא לבנות pull requests.
+7. **חיוב:** Personal לפני ההשקה. **Auto recharge נשאר כבוי** (ברירת המחדל) —
+   כשהקרדיטים נגמרים האתר נעצר, ולא נוצר חיוב בלי גבול. מעקב שימוש בעמוד
+   החיוב.
+8. **GitHub → ה-repo → Settings → Actions → General: Disable actions.** אין
+   secrets ב-GitHub.
+9. **Claude in Chrome — בלי הרשאה ל-`app.netlify.com` ול-`github.com`.** סוכן
+   בדפדפן שמחובר לחשבון שלך יכול ללחוץ Publish במקומך (security-lead: High).
+10. **במחשב:** לא מתחברים ל-Netlify CLI (`netlify login`) ולא מחברים MCP של
+    Netlify — לא ב-WSL ולא ב-Windows.
+11. **סודות של production** (סליקה, מסד נתונים, API בתשלום) — רק ב-Environment
+    variables של Netlify, מוגבלים להקשר production. בשאר ההקשרים — מפתחות
+    בדיקה בלבד. לא ב-`.env`, לא ב-repo, לא ב-WSL.
 
-- **GitHub בחינם, repo פרטי:** אין הגנת ענפים ואין "מאשר חובה" ל-deploy.
-  הגנת ענפים דורשת GitHub Pro; מאשר חובה ל-deploy ב-repo פרטי לא קיים גם
-  ב-Pro וב-Team. לכן לא בונים את הגבול על GitHub.
-- **Vercel:** אפשר לכבות "Auto-assign Custom Production Domains". כל push
-  ל-`main` בונה גרסה במצב **Staged**, והיא לא מוגשת ללקוחות עד שמישהו
-  לוחץ **Promote**. הקידום לא בונה מחדש.
-- **לא אומת:** שהאפשרות הזו זמינה בתוכנית החינמית (Hobby). בודקים בפועל
-  בשלב 2 בצ'קליסט; אם היא חסומה, עוצרים ומדווחים למייסד לפני שממשיכים.
+## שלוש בדיקות שמוכיחות שהשער מחזיק (לפני הפרסום הראשון)
 
-## הצ'קליסט של המייסד (בממשק, פעם אחת ל-repo)
+devops-engineer (או Claude Code בסשן פיתוח) דוחף ל-`main` commit בדיקה עם
+build plugin מקומי שמדפיס **שמות** בלבד — אילו constants ומשתני סביבה
+שנראים כמו הרשאה קיימים בזמן build — ואם יש כזה, מנסה קריאה **לקריאה בלבד**
+ל-API של Netlify ומדפיס רק את קוד התשובה.
 
-1. **חיבור Vercel ל-GitHub** דרך Import Project בדשבורד של Vercel. לא דרך
-   `vercel login` או token במחשב.
-2. **Settings → Environments → Production → Branch Tracking:** לכבות את
-   **Auto-assign Custom Production Domains**.
-3. **לא להתחבר ל-Vercel CLI במחשב שבו Claude עובד** (WSL). אם כבר
-   התחברת: `vercel logout` מהטרמינל שלך. token של Vercel במחשב = Claude
-   יכול לקדם לאוויר.
-4. **סודות של production** (מפתחות סליקה, מסד נתונים, API בתשלום) רק
-   ב-Environment Variables של Vercel תחת Production. לא בקובץ `.env`, לא
-   ב-repo, לא ב-WSL.
-5. **שירותים שמשנים production ישירות** (למשל migration למסד נתונים,
-   הגדרות סליקה): המפתחות שלהם לא נמצאים במחשב. שינוי כזה רץ מתוך
-   ה-build של Vercel, או שהמייסד מריץ אותו בעצמו.
-6. **בדיקה:** Claude דוחף שינוי קטן ל-`main`. ב-Vercel הגרסה מופיעה
-   כ-**Staged**, והאתר החי לא השתנה. המייסד לוחץ **Promote**, והשינוי עולה.
+1. **גרסה נעולה לא ציבורית.** בעמוד הגרסה ב-Deploys מעתיקים את הכתובת
+   הייחודית (`<deploy-id>--<site>.netlify.app`) ופותחים בחלון גלישה בסתר.
+   **נפתח הדף — נכשל.**
+2. **ה-build לא יכול לפרסם בעצמו.** ביומן ה-build: אין שם של טוקן, או
+   שהקריאה החזירה 401/403. **200 — נכשל**: build plugin מתוך ה-repo מחזיק
+   הרשאה ל-API, ושינוי ב-`netlify.toml` הופך לשינוי רגיש שדורש
+   `security-lead` ושער נוסף.
+3. **קרדיטים.** בעמוד החיוב/השימוש — האם הגרסה הנעולה ירדה 15 קרדיטים. אם כן,
+   מאחדים שינויים לפני מיזוג.
 
-## מה devops-engineer בודק (בלי לשנות שום הגדרה)
+ואז **בדיקת Publish:** המייסד לוחץ Publish Deploy על אותה גרסה ורואה שהאתר
+התעדכן (עדיין פרטי). בסוף — commit שמסיר את ה-plugin של הבדיקה.
+
+בדיקה שנכשלה — עוצרים ומדווחים למייסד לפני כל פרסום. החלופה במסמך ההחלטה:
+Vercel Pro.
+
+## מה devops-engineer בודק לפני כל שחרור (בלי לשנות שום הגדרה)
 
 מריץ ומדווח את הפלט, בלי להדפיס ערך של סוד:
 
-- אין התחברות של Vercel CLI: `ls ~/.local/share/com.vercel.cli/auth.json`
-  לא קיים (זה המיקום הרגיל בלינוקס; אם `vercel` מותקן, גם `vercel whoami`
-  צריך להיכשל).
-- אין token בסביבה: `env | grep -ciE 'VERCEL_TOKEN|NETLIFY_AUTH_TOKEN|FLY_API_TOKEN'`
-  מחזיר 0.
-- אין קבצי `.env` עם סודות production ב-repo או ב-git history.
-- ב-Vercel הגרסה האחרונה מ-`main` במצב Staged (שואל את המייסד, או קורא
-  מה-MCP של Vercel אם מחובר בקריאה בלבד).
+- אין התחברות ל-Netlify CLI: `ls ~/.config/netlify/config.json` לא קיים,
+  ואם `netlify` מותקן — `netlify status` לא מחובר.
+- אין טוקן בסביבה: `env | grep -ciE 'NETLIFY_AUTH_TOKEN|NETLIFY_API_TOKEN'` מחזיר 0.
+- אין קבצי `.env` עם סודות ב-repo או בהיסטוריה.
+- `netlify.toml` ו-build plugins: כל שינוי בהם עבר `security-lead`.
 
-כל סעיף שנכשל הוא ממצא **High** ל-`security-lead`: הגבול לא קיים, והאישור
-של security-lead הוא הדבר היחיד שעומד בין הקוד ללקוחות.
+סעיף שנכשל — ממצא **High** ל-`security-lead`.
 
 ## השחרור
 
-1. `release-manager` מרכיב צ'קליסט, `security-lead` כותב אישור ל-commit.
-2. push ל-`main` (ה-hook דורש את האישור).
-3. Vercel בונה גרסה Staged.
-4. rnd-lead מעביר למנכ"ל: "גרסה X ממתינה לקידום", עם קישור לגרסה ומה
-   השתנה בשפה עסקית.
-5. **המייסד לוחץ Promote.** עד אז שום לקוח לא רואה את השינוי.
+1. ביקורות על אותו commit, `security-lead` מאשר, מיזוג fast-forward ל-`main`.
+2. Netlify בונה גרסה נעולה.
+3. המנכ"ל פותח למייסד **משימת Publish** (חוזה הלוח, סעיף 9): ה-commit, מה
+   בסיכון, ואיך מפרסמים.
+4. **המייסד:** Deploys → הגרסה שה-commit שלה מופיע במשימה → **Publish
+   deploy** → מעביר את המשימה ל"הושלם".
+5. בדיקת אתר חי ב-Cowork.
+
+**חזרה אחורה:** Deploys → גרסה קודמת שעבדה → Publish deploy. מיידי, בלי
+בנייה. אחר כך משימת תיקון.
+
+**השקה (פעם אחת):** משימת ה-Publish הראשונה כוללת גם **Project visibility →
+Public**. לפני זה בדיקת האתר החי לא יכולה לרוץ מבחוץ.
 
 ## מה נשאר פתוח
 
-- **ההוכחה שבדיקת אבטחה רצה** היא עדיין קובץ שסוכן כתב. הלחיצה של המייסד
-  היא הבקרה; הקובץ הוא מידע שעוזר לו להחליט.
-- **push ל-`main` לא חסום ברמת GitHub** (דורש Pro). ב-Staged זה לא מגיע
-  ללקוחות, אבל ה-repo עצמו יכול להשתנות. אם יהיו שותפים או קוד רגיש,
-  שווה לשקול Pro.
+- **push ל-`main` לא חסום ב-GitHub** (הגנת ענפים דורשת Pro). הגרסה לא עולה
+  לאוויר בלי Publish, אבל ה-repo עצמו יכול להשתנות.
+- **פרויקט פרטי לא מקבל webhooks** (למשל מסולק). בשלב של סליקה ה-production
+  כבר ציבורי.
+- **PoP של Netlify בישראל** לא אומת.

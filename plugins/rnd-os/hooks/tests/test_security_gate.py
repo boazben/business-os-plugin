@@ -275,6 +275,9 @@ def main(root):
         ("git add alias.ts", "git add src/alias.ts"),
         ("git diff tsconfig.alias.json", "git diff tsconfig.alias.json"),
         ("commit message mentioning push", "git commit -m 'push notifications'"),
+        ("reading netlify.toml", "cat netlify.toml"),
+        ("staging a netlify plugin folder", "git add netlify.toml netlify-gate-check/index.js"),
+        ("netlify status is read-only", "netlify status"),
     ):
         case(name, 0, bash(cmd, repo))
     case("GitHub MCP push_files to a feature branch", 0, run("mcp__github__push_files", {"branch": "feature/x"}, repo))
@@ -299,6 +302,13 @@ def main(root):
         ("set a secret", "gh secret set VERCEL_TOKEN", CONTROL),
         ("repo edit", "gh repo edit --default-branch x", CONTROL),
         ("vercel env add", "vercel env add API_KEY production", CONTROL),
+        ("netlify deploy --prod", "netlify deploy --prod --dir .", CONTROL),
+        ("netlify draft deploy gets a public URL too", "netlify deploy --dir .", CONTROL),
+        ("netlify-cli through npx", "npx netlify-cli deploy --prod", CONTROL),
+        ("netlify login", "netlify login", CONTROL),
+        ("netlify api publish a deploy", "netlify api restoreSiteDeploy --data '{\"site_id\":\"x\",\"deploy_id\":\"y\"}'", CONTROL),
+        ("netlify env set", "netlify env:set STRIPE_KEY sk_live", CONTROL),
+        ("netlify unlock auto publishing", "ntl unlock", CONTROL),
         ("git alias hides a push", "git config alias.ship push", CONTROL),
         ("one-off git alias", "git -c alias.x=push x origin main", CONTROL),
         ("move main through the refs API", "gh api repos/o/r/git/refs/heads/main -X PATCH -f sha=abc", API),

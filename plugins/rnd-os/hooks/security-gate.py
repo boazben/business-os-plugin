@@ -106,6 +106,10 @@ HOSTING_CONTROL_PATTERNS = [re.compile(p, re.I) for p in (
     r"\bgh\s+(secret|variable)\s+(set|delete|remove)\b",
     r"\bgh\s+repo\s+(edit|delete|rename|archive)\b",
     r"\bvercel\s+(env\s+(add|rm|remove)|project\s+(rm|remove)|teams)\b",
+    # Netlify: publishing and settings belong to the founder's UI. Any CLI deploy (a draft deploy
+    # gets a public URL too), login/link, API calls, env and site changes, lock/unlock.
+    r"\b(netlify|netlify-cli|ntl)\s+(deploy|login|link|unlink|init|api|env:(set|unset|import|clone)|sites:(create|delete)"
+    r"|lock|unlock|switch|build\s+--deploy)\b",
     r"\bgit\b(\s+-c\s*|[^;&|\n]*\bconfig\b[^;&|\n]*\s)alias\.",
 )]
 # Branches change through `git push` of an approved commit, not through the API.
