@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "workspace": "בעז בן-דוד's Notion",
   "hub_page": {
     "title": "Business OS",
@@ -11,6 +11,13 @@
   },
   "tasks": {
     "database_id": "7e7a6414-94ab-446d-a1b5-920260cf3148",
-    "data_source_id": "aec80c35-57df-45fb-88ee-32e42b5b4c8b"
+    "data_source_id": "aec80c35-57df-45fb-88ee-32e42b5b4c8b",
+    "views": {
+      "ממתין לבעז": "3dc29cc4-3683-81f9-bbae-000cba01a788",
+      "סבבים — החזרתי": "3de29cc4-3683-8103-8ddf-000c9b54b700",
+      "רעיונות": "3dd29cc4-3683-8078-b0d9-000c6c52435c",
+      "לפי מחלקה": "3dc29cc4-3683-811c-8312-000c245012bd",
+      "Inbox — בלי פרויקט": "3dc29cc4-3683-817c-83b5-000c4785e500"
+    }
   }
 }
