@@ -67,7 +67,10 @@ GH_API_WRITE = (r"\bgh\s+api\b(?=[^;&|\n]*(-X\s*(POST|PUT|PATCH|DELETE)\b|--meth
 DEPLOY_PATTERNS = [re.compile(p, re.I) for p in (
     r"\bvercel\b[^;&|\n]*\s--(prod|target[=\s]+production)\b",
     r"\bvercel\s+(promote|alias|rollback|rolling-release)\b",
-    r"\bnetlify\s+deploy\b[^;&|\n]*\s--prod\b",
+    # Netlify publish: a --prod CLI deploy, publishing an already-built deploy through the API, or
+    # unlocking auto publishing (every later merge would go live without asking).
+    r"\b(netlify|netlify-cli|ntl)\s+(deploy\b[^;&|\n]*\s--(prod|prod-if-unlocked)\b|unlock\b"
+    r"|api\s+(restoreSiteDeploy|unlockDeploy)\b)",
     r"\b(fly|flyctl)\s+deploy\b",
     r"\bwrangler\s+(deploy|publish|pages\s+deploy|versions\s+deploy)\b",
     r"\bfirebase\s+deploy\b",
@@ -102,14 +105,16 @@ MERGE_PIN_RE = re.compile(r"--match-head-commit[=\s]+(\S+)|\bsha=(\S+)")
 
 # Changing what guards production is never Claude's call, approval or not.
 HOSTING_CONTROL_PATTERNS = [re.compile(p, re.I) for p in (
-    GH_API_WRITE + r"[^;&|\n]*(/protection|/rulesets|/environments|pending_deployments|/actions/(secrets|variables|permissions)|/collaborators|/keys\b|/hooks\b)",
+    GH_API_WRITE + r"[^;&|\n]*(/protection|/rulesets|/environments|pending_deployments|/actions/(secrets|variables)|/actions/permissions(?![^;&|\n]*\benabled=false\b)|/collaborators|/keys\b|/hooks\b)",
     r"\bgh\s+(secret|variable)\s+(set|delete|remove)\b",
     r"\bgh\s+repo\s+(edit|delete|rename|archive)\b",
     r"\bvercel\s+(env\s+(add|rm|remove)|project\s+(rm|remove)|teams)\b",
-    # Netlify: publishing and settings belong to the founder's UI. Any CLI deploy (a draft deploy
-    # gets a public URL too), login/link, API calls, env and site changes, lock/unlock.
-    r"\b(netlify|netlify-cli|ntl)\s+(deploy|login|link|unlink|init|api|env:(set|unset|import|clone)|sites:(create|delete)"
-    r"|lock|unlock|switch|build\s+--deploy)\b",
+    # Netlify: the founder let Claude manage settings (17.9.2026); publishing goes through Rule 1.
+    # Still never Claude's: a draft deploy (its URL skips the pre-live review), secrets, and deleting.
+    r"\b(netlify|netlify-cli|ntl)\s+(deploy\b(?![^;&|\n]*--prod)|build\s+--deploy"
+    r"|env:(set|unset|import|clone)|sites:delete)\b",
+    r"\b(netlify|netlify-cli|ntl)\s+api\s+(createSiteDeploy|createEnvVars|setEnvVarValue|updateEnvVar"
+    r"|deleteEnvVar|deleteEnvVarValue|deleteSite|deleteDeploy|deleteSiteDeploy)\b",
     r"\bgit\b(\s+-c\s*|[^;&|\n]*\bconfig\b[^;&|\n]*\s)alias\.",
 )]
 # Branches change through `git push` of an approved commit, not through the API.

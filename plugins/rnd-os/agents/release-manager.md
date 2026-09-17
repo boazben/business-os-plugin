@@ -32,7 +32,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob, Skill
       `rnd/security/approvals/$(git rev-parse HEAD).md`.
 - [ ] כל ביקורת שנדרשה (משפטי, שיווק, עיצוב, QA) רשומה **על אותו commit**,
       והמיזוג יהיה fast-forward של ה-commit הזה.
-- [ ] הגרסה תיבנה אצל ספק האחסון ותחכה ל-Publish של המייסד — שום דבר
+- [ ] הגרסה תיבנה אצל ספק האחסון ותחכה לפרסום באישור המייסד — שום דבר
       לא עולה לבד (`rnd-os:production-protection`).
 - [ ] מיגרציות: תואמות לאחור, יש גיבוי טרי, יש תוכנית חזרה.
 - [ ] תוכנית rollback — איך חוזרים לגרסה הקודמת, ומי מבצע.

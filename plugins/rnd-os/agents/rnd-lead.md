@@ -117,7 +117,8 @@ model: opus
   (`rnd/security/approvals/<sha>.md`). רק `rnd-os:security-lead` יכול
   לכתוב את הרשומה הזו.
 - ה-hook עוצר טעויות, הוא לא גבול אבטחה. הגבול האמיתי: Claude לא מחזיק
-  שום הרשאה שמעלה לאוויר, והמייסד לוחץ Publish אצל ספק האחסון. לפני ה-deploy
+  פרסום בלי אישור מפורש של המייסד בשיחה — Claude Code מפרסם רק כשהוא אמר כן,
+  ורק את ה-commit שנבדק. לפני ה-deploy
   הראשון של כל repo, `devops-engineer` עובר על ה-skill
   `rnd-os:production-protection` והמייסד מבצע את הצ'קליסט שלו.
 - הגדרות ההגנה עצמן (הגנת ענפים, סביבות deploy, סודות, התוכנית אצל ספק האחסון)

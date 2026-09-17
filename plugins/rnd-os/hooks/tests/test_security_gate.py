@@ -189,6 +189,11 @@ def main(root):
         ("text piped into a shell", "echo 'vercel --prod' | bash", DEPLOY),
         ("gh pr merge without a pinned commit", "gh pr merge 12 --squash", PIN),
         ("gh workflow run", "gh workflow run deploy.yml", DEPLOY),
+        ("netlify publish an existing deploy", "netlify api restoreSiteDeploy --data '{\"site_id\":\"x\",\"deploy_id\":\"y\"}'", DEPLOY),
+        ("netlify deploy --prod", "netlify deploy --prod --dir .", DEPLOY),
+        ("netlify-cli through npx", "npx netlify-cli deploy --prod", DEPLOY),
+        ("netlify unlock auto publishing", "ntl unlock", DEPLOY),
+        ("netlify api unlock a deploy", "netlify api unlockDeploy --data '{\"deploy_id\":\"y\"}'", DEPLOY),
         ("gh api merge without sha", "gh api -X PUT repos/o/r/pulls/1/merge", PIN),
         ("push HEAD:refs/heads/main", "git push origin HEAD:refs/heads/main", PUSH),
         ("push HEAD:heads/main", "git push origin HEAD:heads/main", PUSH),
@@ -278,6 +283,12 @@ def main(root):
         ("reading netlify.toml", "cat netlify.toml"),
         ("staging a netlify plugin folder", "git add netlify.toml netlify-gate-check/index.js"),
         ("netlify status is read-only", "netlify status"),
+        ("netlify login", "npx netlify-cli login"),
+        ("netlify link", "netlify link --id abc"),
+        ("netlify lock auto publishing", "netlify api lockDeploy --data '{\"deploy_id\":\"y\"}'"),
+        ("netlify api changes site settings", "netlify api updateSite --data '{\"site_id\":\"x\"}'"),
+        ("netlify env list", "netlify env:list"),
+        ("disable GitHub Actions", "gh api -X PUT repos/o/r/actions/permissions -F enabled=false"),
     ):
         case(name, 0, bash(cmd, repo))
     case("GitHub MCP push_files to a feature branch", 0, run("mcp__github__push_files", {"branch": "feature/x"}, repo))
@@ -292,6 +303,8 @@ def main(root):
     approved = new_repo()
     approve(approved)
     case("approved commit deploys", 0, bash("vercel --prod", approved))
+    case("approved commit publishes an existing Netlify deploy", 0, bash("netlify api restoreSiteDeploy --data '{\"site_id\":\"x\",\"deploy_id\":\"y\"}'", approved))
+    case("listing Netlify deploys is read-only", 0, bash("netlify api listSiteDeploys --data '{\"site_id\":\"x\"}'", repo))
     for name, cmd, reason in (
         ("delete branch protection", "gh api -X DELETE repos/o/r/branches/main/protection", CONTROL),
         ("delete branch protection, quoted method", "gh api -X 'DELETE' repos/o/r/branches/main/protection", CONTROL),
@@ -302,13 +315,11 @@ def main(root):
         ("set a secret", "gh secret set VERCEL_TOKEN", CONTROL),
         ("repo edit", "gh repo edit --default-branch x", CONTROL),
         ("vercel env add", "vercel env add API_KEY production", CONTROL),
-        ("netlify deploy --prod", "netlify deploy --prod --dir .", CONTROL),
         ("netlify draft deploy gets a public URL too", "netlify deploy --dir .", CONTROL),
-        ("netlify-cli through npx", "npx netlify-cli deploy --prod", CONTROL),
-        ("netlify login", "netlify login", CONTROL),
-        ("netlify api publish a deploy", "netlify api restoreSiteDeploy --data '{\"site_id\":\"x\",\"deploy_id\":\"y\"}'", CONTROL),
         ("netlify env set", "netlify env:set STRIPE_KEY sk_live", CONTROL),
-        ("netlify unlock auto publishing", "ntl unlock", CONTROL),
+        ("netlify api env write", "netlify api createEnvVars --data '{}'", CONTROL),
+        ("netlify delete site", "netlify sites:delete abc", CONTROL),
+        ("enable GitHub Actions", "gh api -X PUT repos/o/r/actions/permissions -F enabled=true", CONTROL),
         ("git alias hides a push", "git config alias.ship push", CONTROL),
         ("one-off git alias", "git -c alias.x=push x origin main", CONTROL),
         ("move main through the refs API", "gh api repos/o/r/git/refs/heads/main -X PATCH -f sha=abc", API),
