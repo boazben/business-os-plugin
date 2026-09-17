@@ -2,8 +2,13 @@
 
 Reads a PreToolUse payload for a Notion tool on stdin and exits 2 (block) when
 the call would:
-- set a status-like property to an approved value, or any property to exactly
-  an approved value (only the founder approves, in Notion's own UI);
+- set a status-like property to an approved value or to "לסבב נוסף", or any
+  property to exactly an approved value. Those are the two exits from
+  "ממתין לאישור", and both are the founder's, in Notion's own UI;
+- write the founder's own reply property ("תגובת מייסד"), which is what he
+  said when he approved a task or sent it back for another round. A run reads
+  it and copies it into the page body under "## סבב <n>"; writing the property
+  itself would let a round rewrite the founder's words;
 - create a database, change any data source's schema, or trash one (the
   schema is the contract in skills/notion-board; renaming an option to
   "approved" would approve every task that had the old one);
@@ -36,8 +41,16 @@ STATUS_NAMES = ("סטטוס", "status")
 # Substrings that mean "approved" inside a status value: מאושר, אושר, אושרה,
 # מאושרת all contain אושר; מאשר is the spelling without vav (niqqud form).
 APPROVED_PARTS = ("אושר", "מאשר", "approved")
+# The other exit the founder owns: sending a task back for another round
+# ("לסבב נוסף"). Letters-only, so the space is already gone. Only inside a
+# status value — a result line like "סבב 2: קוצר" must stay writable.
+FOUNDER_STATUS_PARTS = APPROVED_PARTS + ("סבבנוסף", "anotherround")
 # Exact values that mean "approved" in any other property.
 APPROVED_VALUES = {"מאושר", "מאושרת", "אושר", "אושרה", "מאשר", "approved"}
+# The founder's reply column, compared letters-only (so spaces are already
+# gone): "תגובת מייסד" / "הערת מייסד" / "founder note". Only he writes it.
+# Matched as a substring so a renamed or suffixed column still counts.
+FOUNDER_NOTE_NAMES = ("תגובתמייסד", "הערתמייסד", "foundernote", "founderreply")
 
 # Tool names are compared lowercased with "_" turned into "-".
 STRUCTURE_RE = re.compile(
@@ -51,10 +64,12 @@ TRASH_KEYS = ("in_trash", "archived")
 MESSAGE = (
     "business-os: this Notion call is outside the board contract "
     "(skill business-os:notion-board). Claude does not set a task to 'מאושר' "
-    "(only the founder approves, in Notion itself), create databases, change "
-    "a database's columns or options, create pages without a parent, move, "
-    "duplicate or trash pages, or hand work to Notion AI. Leave approvals at "
-    "'ממתין לאישור' and tell the founder what change is needed."
+    "or 'לסבב נוסף' (both exits from 'ממתין לאישור' are the founder's, in "
+    "Notion itself), write his reply column 'תגובת מייסד', create databases, "
+    "change a database's columns or options, create pages without a parent, "
+    "move, duplicate or trash pages, or hand work to Notion AI. Leave "
+    "approvals at 'ממתין לאישור'; record what he said in the page body under "
+    "'## סבב <n>', and tell the founder what change is needed."
 )
 
 
@@ -86,12 +101,14 @@ def has_key(value, key):
     return False
 
 
-def approves(properties):
+def founder_status(properties):
+    """True when the call sets a status only the founder sets: approved, or
+    sent back for another round."""
     if isinstance(properties, str):
         try:
             properties = json.loads(properties)
         except ValueError:
-            return any(part in letters(properties) for part in APPROVED_PARTS)
+            return any(part in letters(properties) for part in FOUNDER_STATUS_PARTS)
     if not isinstance(properties, dict):
         return False
     for name, value in properties.items():
@@ -103,20 +120,36 @@ def approves(properties):
             clean = letters(text)
             if clean in APPROVED_VALUES:
                 return True
-            if is_status and any(part in clean for part in APPROVED_PARTS):
+            if is_status and any(part in clean for part in FOUNDER_STATUS_PARTS):
                 return True
     return False
 
 
-def any_properties_approve(node):
+def writes_founder_note(properties):
+    """True when the call sets the founder's own reply property."""
+    if isinstance(properties, str):
+        try:
+            properties = json.loads(properties)
+        except ValueError:
+            clean = letters(properties)
+            return any(name in clean for name in FOUNDER_NOTE_NAMES)
+    if not isinstance(properties, dict):
+        return False
+    return any(
+        any(n in letters(name) for n in FOUNDER_NOTE_NAMES) for name in properties
+    )
+
+
+def any_properties(node, check):
+    """True when `check` holds for any "properties" value anywhere in the call."""
     if isinstance(node, dict):
         for key, value in node.items():
-            if key == "properties" and approves(value):
+            if key == "properties" and check(value):
                 return True
-            if any_properties_approve(value):
+            if any_properties(value, check):
                 return True
     elif isinstance(node, list):
-        return any(any_properties_approve(item) for item in node)
+        return any(any_properties(item, check) for item in node)
     return False
 
 
@@ -142,7 +175,11 @@ def blocked(tool, tool_input):
     if creating and not tool_input.get("parent"):
         return True
     if creating or UPDATE_PAGE_RE.search(tool):
-        return trashes(tool_input) or any_properties_approve(tool_input)
+        return (
+            trashes(tool_input)
+            or any_properties(tool_input, founder_status)
+            or any_properties(tool_input, writes_founder_note)
+        )
     return False
 
 
