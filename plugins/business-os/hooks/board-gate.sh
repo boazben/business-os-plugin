@@ -1,12 +1,12 @@
 #!/bin/sh
-# business-os — PreToolUse hook for Notion tools. Keeps writes inside the board
-# contract (skills/notion-board): only the founder approves, and no session
-# changes the board's structure. See board-gate.py for the exact rules.
+# business-os — PreToolUse hook for Notion tools. It does not block board work:
+# it lets the call through, warns the founder and keeps a record, so Claude can
+# do more of the board and he does less of it by hand. See board-gate.py for
+# the exact verdicts (ok / warn / ask).
 #
-# Fails closed: if python3 is missing or the check fails, a Notion call that
-# mentions an approved value, names the founder's reply column, or is a
-# structure tool (create database, update data source, move, duplicate,
-# Notion AI), is blocked.
+# Fails open, loudly: if python3 is missing or the check itself fails, a Notion
+# write still goes through with a warning that it was not checked — except
+# trashing a page or handing work to Notion AI, which ask for one click first.
 
 here=$(dirname "$0")
 input=$(cat)
@@ -18,9 +18,14 @@ if command -v python3 >/dev/null 2>&1 && [ -r "$here/board-gate.py" ]; then
   [ "$rc" -eq 2 ] && exit 2
 fi
 
-# Approved words, and the founder's reply column, raw or JSON-escaped.
-if printf '%s' "$input" | grep -Eiq 'אושר|מאשר|approved|סבב.{0,6}נוסף|תגובת.{0,6}מייסד|\\u05d0\\u05d5\\u05e9\\u05e8|\\u05de\\u05d0\\u05e9\\u05e8|\\u05e1\\u05d1\\u05d1.{0,12}\\u05e0\\u05d5\\u05e1\\u05e3|\\u05ea\\u05d2\\u05d5\\u05d1\\u05ea.{0,12}\\u05de\\u05d9\\u05d9\\u05e1\\u05d3|"in_trash"[[:space:]]*:[[:space:]]*true|notion[-_](create[-_]database|update[-_]data[-_]source|move[-_]pages|duplicate[-_]page|spawn[-_]session|send[-_]message[-_]to[-_]session)"'; then
-  echo "business-os: only the founder approves board tasks or sends them back for another round, in Notion itself, and only he writes 'תגובת מייסד'. The board check could not run, so this Notion call is blocked. Leave the task at 'ממתין לאישור'." >&2
-  exit 2
+# The check could not run. Confirm only what does not come back on its own.
+if printf '%s' "$input" | grep -Eq '"(in_trash|archived)"[[:space:]]*:[[:space:]]*true|notion[-_](spawn[-_]session|send[-_]message[-_]to[-_]session)"'; then
+  printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"business-os — בדיקת הלוח לא רצה, והקריאה הזו מוחקת דף או מעבירה עבודה ל-Notion AI. זו פעולה שלא חוזרת לבד. לאשר?"},"systemMessage":"⚠️ business-os — בדיקת הלוח לא רצה (אין python3)."}'
+  exit 0
+fi
+
+# Any other Notion write: through, with a warning that nothing checked it.
+if printf '%s' "$input" | grep -Eq 'notion[-_]?(update|create|patch|post|move|duplicate|delete)|API-(patch|post|create|delete)'; then
+  printf '%s' '{"systemMessage":"⚠️ business-os — בדיקת הלוח לא רצה (אין python3). הכתיבה ל-Notion עברה בלי בדיקה ובלי רישום ב-board-log.md."}'
 fi
 exit 0

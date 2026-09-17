@@ -1,40 +1,48 @@
-"""business-os board gate: keeps the Notion board inside its contract.
+"""business-os board gate: records Notion board writes that leave the contract.
 
-Reads a PreToolUse payload for a Notion tool on stdin and exits 2 (block) when
-the call would:
-- set a status-like property to an approved value or to "לסבב נוסף", or any
-  property to exactly an approved value. Those are the two exits from
-  "ממתין לאישור", and both are the founder's, in Notion's own UI;
-- write the founder's own reply property ("תגובת מייסד"), which is what he
-  said when he approved a task or sent it back for another round. A run reads
-  it and copies it into the page body under "## סבב <n>"; writing the property
-  itself would let a round rewrite the founder's words;
-- create a database, change any data source's schema, or trash one (the
-  schema is the contract in skills/notion-board; renaming an option to
-  "approved" would approve every task that had the old one);
-- create a page without a parent (a loose page instead of a board row);
-- move, duplicate or trash pages (a copy of an approved task is an approved
-  task; the board keeps its history);
-- hand work to Notion's own AI agent, which could do any of this for Claude.
-Exits 0 otherwise. Any other exit code means the check itself failed;
-board-gate.sh then falls back to a coarser text match instead of allowing.
+Reads a PreToolUse payload for a Notion tool on stdin. It does not block board
+work. The founder asked for a gate that warns and keeps a record instead of
+standing in the way, so that Claude can do more of the board work and he does
+less of it by hand. Three verdicts, all exiting 0:
+
+- "ok"   — silent. Ordinary board work.
+- "warn" — a systemMessage for the founder plus a row in
+           ~/.business-os/board-log.md, and the call goes through. Everything
+           the contract reserves for him: the two exits from "ממתין לאישור"
+           (מאושר, לסבב נוסף), his reply column "תגובת מייסד", the board's
+           structure, a page created without a parent, a page moved or
+           duplicated.
+- "ask"  — permissionDecision "ask", so he confirms in one click, plus the
+           same row. Only what does not come back on its own: trashing or
+           archiving a page, and handing work to Notion's own AI agent, which
+           could do anything on the board on Claude's behalf.
+
+What this file no longer enforces is now discipline in skills/notion-board and
+skills/run-board. Two things make that an acceptable trade. The record: every
+warn and ask lands in board-log.md with the session id, so a wrong approval is
+visible rather than silent. And the release gate is untouched — what reaches
+customers goes live only when the founder clicks Publish at the hosting
+provider, never because a task says "מאושר".
 
 Two tool families are understood: the Notion connector (notion-update-page,
 flat property values) and the Notion REST API as exposed by a local Notion MCP
 server (API-patch-page and friends, nested values such as
 {"status": {"name": "..."}}). A status set only by option id cannot be read,
-so it is blocked.
+so it counts as the founder's.
 
-Why a denylist of approved words rather than an allowlist of statuses: the hook
-sees every Notion database the founder uses, not only the board, and an
-allowlist would block status updates in all of them.
+Why a denylist of the founder's own words rather than an allowlist of statuses:
+the hook sees every Notion database he uses, not only the board, and an
+allowlist would flag status updates in all of them.
 
 Tests: hooks/tests/test_board_gate.py.
 """
 
+import datetime
 import json
+import os
 import re
 import sys
+import tempfile
 import unicodedata
 
 STATUS_NAMES = ("סטטוס", "status")
@@ -43,34 +51,42 @@ STATUS_NAMES = ("סטטוס", "status")
 APPROVED_PARTS = ("אושר", "מאשר", "approved")
 # The other exit the founder owns: sending a task back for another round
 # ("לסבב נוסף"). Letters-only, so the space is already gone. Only inside a
-# status value — a result line like "סבב 2: קוצר" must stay writable.
+# status value — a result line like "סבב 2: קוצר" is ordinary board work.
 FOUNDER_STATUS_PARTS = APPROVED_PARTS + ("סבבנוסף", "anotherround")
 # Exact values that mean "approved" in any other property.
 APPROVED_VALUES = {"מאושר", "מאושרת", "אושר", "אושרה", "מאשר", "approved"}
 # The founder's reply column, compared letters-only (so spaces are already
-# gone): "תגובת מייסד" / "הערת מייסד" / "founder note". Only he writes it.
-# Matched as a substring so a renamed or suffixed column still counts.
+# gone): "תגובת מייסד" / "הערת מייסד" / "founder note". Matched as a substring
+# so a renamed or suffixed column still counts.
 FOUNDER_NOTE_NAMES = ("תגובתמייסד", "הערתמייסד", "foundernote", "founderreply")
 
 # Tool names are compared lowercased with "_" turned into "-".
-STRUCTURE_RE = re.compile(
-    r"(create-database|update-data-source|move-pages|duplicate-page|spawn-session|send-message-to-session"
-    r"|create-a-database|update-a-database|create-a-data-source|update-a-data-source|move-page)$"
+NOTION_AI_RE = re.compile(r"(spawn-session|send-message-to-session)$")
+SCHEMA_RE = re.compile(
+    r"(create-database|update-data-source"
+    r"|create-a-database|update-a-database|create-a-data-source|update-a-data-source)$"
 )
+REORGANIZE_RE = re.compile(r"(move-pages|move-page|duplicate-page)$")
 CREATE_PAGE_RE = re.compile(r"(create-pages|post-page|create-a-page)$")
 UPDATE_PAGE_RE = re.compile(r"(update-page|patch-page|update-a-page)$")
 TRASH_KEYS = ("in_trash", "archived")
 
-MESSAGE = (
-    "business-os: this Notion call is outside the board contract "
-    "(skill business-os:notion-board). Claude does not set a task to 'מאושר' "
-    "or 'לסבב נוסף' (both exits from 'ממתין לאישור' are the founder's, in "
-    "Notion itself), write his reply column 'תגובת מייסד', create databases, "
-    "change a database's columns or options, create pages without a parent, "
-    "move, duplicate or trash pages, or hand work to Notion AI. Leave "
-    "approvals at 'ממתין לאישור'; record what he said in the page body under "
-    "'## סבב <n>', and tell the founder what change is needed."
+CONTRACT = "החוזה: business-os:notion-board."
+REASONS = {
+    "approval": 'קלוד מעביר משימה לסטטוס שהוא שלך — "מאושר" או "לסבב נוסף" (סעיף 6).',
+    "founder_note": 'קלוד כותב בעמודה "תגובת מייסד" — זה דורס את מה שאתה כתבת.',
+    "schema": "קלוד משנה את מבנה הלוח — מסד, עמודה או אופציה.",
+    "orphan": "קלוד יוצר דף בלי parent — הוא לא ייכנס ללוח אלא יישאר דף בודד.",
+    "reorganize": "קלוד מזיז או משכפל דף בלוח.",
+    "trash": "קלוד מוחק או מעביר לסל דף בלוח.",
+    "notion_ai": "קלוד מעביר עבודה ל-Notion AI, שיכול לעשות כל דבר בלוח בשמו.",
+}
+LOG_PATH = (".business-os", "board-log.md")
+LOG_HEADER = (
+    "| time (UTC) | session | level | tool | what |\n"
+    "|---|---|---|---|---|\n"
 )
+MAX_BYTES = 200_000
 
 
 def letters(text):
@@ -161,34 +177,97 @@ def trashes(node):
     return False
 
 
-def blocked(tool, tool_input):
-    if STRUCTURE_RE.search(tool):
-        return True
+def verdict(tool, tool_input):
+    """("ok" | "warn" | "ask", reason) for this call."""
+    if NOTION_AI_RE.search(tool):
+        return "ask", REASONS["notion_ai"]
+    if SCHEMA_RE.search(tool):
+        return "warn", REASONS["schema"]
+    if REORGANIZE_RE.search(tool):
+        return "warn", REASONS["reorganize"]
     if isinstance(tool_input, str):
         try:
             tool_input = json.loads(tool_input)
         except ValueError:
-            return False
+            return "ok", ""
     if not isinstance(tool_input, dict):
-        return False
+        return "ok", ""
     creating = bool(CREATE_PAGE_RE.search(tool))
+    if not creating and not UPDATE_PAGE_RE.search(tool):
+        return "ok", ""
+    if trashes(tool_input):
+        return "ask", REASONS["trash"]
+    if any_properties(tool_input, founder_status):
+        return "warn", REASONS["approval"]
+    if any_properties(tool_input, writes_founder_note):
+        return "warn", REASONS["founder_note"]
     if creating and not tool_input.get("parent"):
-        return True
-    if creating or UPDATE_PAGE_RE.search(tool):
-        return (
-            trashes(tool_input)
-            or any_properties(tool_input, founder_status)
-            or any_properties(tool_input, writes_founder_note)
-        )
-    return False
+        return "warn", REASONS["orphan"]
+    return "ok", ""
+
+
+def cell(value, limit=120):
+    return " ".join(str(value).split()).replace("|", "/")[:limit]
+
+
+def record(payload, tool, level, reason):
+    """Append one row to the board log. A failure here costs a row, not a call."""
+    try:
+        home = os.environ.get("HOME")
+        if not home:
+            return
+        path = os.path.join(home, *LOG_PATH)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        row = "| " + " | ".join(cell(v) for v in (
+            datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            (payload.get("session_id") or "")[:8],
+            level,
+            tool,
+            reason,
+        )) + " |\n"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a") as f:
+            if os.fstat(f.fileno()).st_size == 0:
+                f.write(LOG_HEADER)
+            f.write(row)
+        if os.path.getsize(path) > MAX_BYTES:
+            trim(path)
+    except Exception:  # noqa: BLE001 - the log is a record, never a gate
+        return
+
+
+def trim(path):
+    with open(path, encoding="utf-8") as f:
+        body = f.readlines()[2:]
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+    with os.fdopen(fd, "w") as out:
+        out.write(LOG_HEADER)
+        out.writelines(body[len(body) // 2:])
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
 
 
 def main():
     payload = json.load(sys.stdin)
     tool = str(payload.get("tool_name", "")).lower().replace("_", "-")
-    if blocked(tool, payload.get("tool_input")):
-        print(MESSAGE, file=sys.stderr)
-        return 2
+    level, reason = verdict(tool, payload.get("tool_input"))
+    if level == "ok":
+        return 0
+
+    record(payload, tool, level, reason)
+    warning = f"⚠️ business-os — לוח: {reason} {CONTRACT}"
+    if level == "ask":
+        out = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "ask",
+                "permissionDecisionReason": f"{reason} זו פעולה שלא חוזרת לבד. {CONTRACT}",
+            },
+            "systemMessage": warning,
+        }
+    else:
+        out = {"systemMessage": warning + " עבר ונרשם ב-~/.business-os/board-log.md."}
+    json.dump(out, sys.stdout, ensure_ascii=False)
     return 0
 
 
