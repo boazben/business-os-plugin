@@ -10,8 +10,14 @@ description: הגבול בין הקוד לבין האתר החי, על Netlify �
 
 **החלטת מייסד 17.9.2026:** Claude Code מחובר ל-Netlify, מנהל את ההגדרות,
 ו**מפרסם רק אחרי כן מפורש של המייסד בשיחה** — כמו push. **העיקרון לא תלוי
-בספק:** מיזוג ל-`main` בונה גרסה נעולה שמחכה; גרסה שלא פורסמה לא ציבורית;
-אין פרסום בריצה מתוזמנת או בלי המייסד בשיחה.
+בספק:** מה שעולה לאוויר הוא רק commit שאושר; אין פרסום בריצה מתוזמנת או בלי
+המייסד בשיחה.
+
+**על Free — הפרסום יוצא מהמחשב.** Netlify חוסם בנייה מ-repo פרטי בתוכנית
+החינמית ("Unrecognized Git contributor"), ולכן הבנייה האוטומטית מכובה
+(`stop_builds`) ו-Claude Code מעלה את האתר מ**עותק נקי של ה-commit שאושר**.
+בתוכנית בתשלום חוזרים לבנייה מ-Git ולגרסה נעולה שמחכה אצל הספק — מה שמשתפר
+אז רשום במסמך ההחלטה בתיקיית הפרויקט.
 
 ## למה זה קיים
 
@@ -44,7 +50,8 @@ Netlify, והכלל ההתנהגותי — פרסום רק אחרי "כן" של�
    existing project → GitHub → ה-repo.
 4. **פרויקט פרטי** — Project visibility: Private, עד ההשקה. בממשק: Project
    configuration → General → Visitor access.
-5. **נעילה** — Lock to stop auto publishing. מעכשיו כל push ל-`main` נבנה ומחכה.
+5. **נעילה** — Lock to stop auto publishing, וב-Free גם `stop_builds` (בנייה
+   אוטומטית כבויה; היא נכשלת ממילא). בתוכנית בתשלום מסירים את `stop_builds`.
 6. **בלי גרסאות ביניים** — Branch deploys רק ל-production; Deploy Previews כבויים.
 7. **GitHub Actions כבוי:** `gh api -X PUT repos/<owner>/<repo>/actions/permissions -F enabled=false`.
 8. **שם הפרויקט ב-Netlify וכתובת עמוד הגרסאות** נרשמים ב-README של ה-repo.
@@ -62,11 +69,13 @@ commit בדיקה עם build plugin מקומי שמדפיס **שמות** בלב�
 
 1. **גרסה נעולה לא ציבורית.** הכתובת הייחודית (`<deploy-id>--<site>.netlify.app`)
    נבדקת מבחוץ בלי התחברות (`curl -sI`, או המייסד בחלון גלישה בסתר). **נפתח הדף — נכשל.**
-2. **ה-build לא יכול לפרסם בעצמו.** ביומן: אין שם של טוקן, או 401/403. **200 —
-   נכשל**: שינוי ב-`netlify.toml` הופך לשינוי רגיש שדורש `security-lead`.
+2. **ה-build לא יכול לפרסם בעצמו.** ביומן: אין שם של טוקן, או 401/403.
+   **ב-Netlify זה נכשל (17.9.2026): תוסף build מקבל `NETLIFY_API_TOKEN` והקריאה
+   החזירה 200.** לכן `netlify.toml` וכל תוסף build הם שינוי שדורש `security-lead`,
+   ואין ספריות של צד שלישי בזמן בנייה בלי נעילת גרסאות וביקורת.
 3. **קרדיטים.** האם הגרסה הנעולה הורידה 15 קרדיטים. אם כן — מאחדים שינויים לפני מיזוג.
-4. **קישור ישיר לגרסה.** `netlify api listSiteDeploys` או
-   `gh api repos/<owner>/<repo>/commits/<sha>/status` — הגרסה של ה-commit ועמוד הניהול שלה.
+4. **מה שפורסם הוא מה שאושר.** אחרי הפרסום: `netlify api getSite` ו-`getDeploy`,
+   והשוואת התוכן החי ל-`git archive` של אותו commit.
 
 ואז **פרסום בדיקה** באישור המייסד (האתר עדיין פרטי), ו-commit שמסיר את ה-plugin
 של הבדיקה. בדיקה שנכשלה — עוצרים ומדווחים לפני כל פרסום.
@@ -77,17 +86,19 @@ commit בדיקה עם build plugin מקומי שמדפיס **שמות** בלב�
 2. קוראים את משימת ה-Publish: ה-commit ו"מה בסיכון".
 3. `security-lead` אישר את ה-commit (`rnd/security/approvals/<sha>.md`), וה-commit
    הזה הוא ה-HEAD של `main` ב-GitHub.
-4. `netlify api listSiteDeploys` → הגרסה שה-`commit_ref` שלה הוא ה-sha המלא,
-   במצב `ready`. אין כזו — עוצרים ומדווחים.
-5. **שואלים את המייסד** בשורה אחת: "מפרסם את BOS-n — commit `<7 תווים>`,
+4. **שואלים את המייסד** בשורה אחת: "מפרסם את BOS-n — commit `<7 תווים>`,
    <מה בסיכון>. לפרסם?" — ומחכים ל"כן". כל דבר אחר הוא לא.
-6. `netlify api restoreSiteDeploy --data '{"site_id":"…","deploy_id":"…"}'`
-   (חלון ה-`ask` קופץ — המייסד מאשר).
-7. `netlify api getSite` — `published_deploy.id` הוא הגרסה שפורסמה. מדווחים,
-   ומעבירים את המשימה ל"הושלם" (חוזה הלוח, סעיף 9).
+5. **עותק נקי של ה-commit** (לא עותק העבודה): `git archive <sha> | tar -x -C <tmp>`.
+   מוודאים שהתוכן שם זהה לזה שנבדק.
+6. `netlify deploy --prod --dir <tmp>` (חלון ה-`ask` קופץ — המייסד מאשר).
+   בתוכנית בתשלום, במקום זה: `netlify api listSiteDeploys` → הגרסה שה-`commit_ref`
+   שלה הוא ה-sha, ואז `netlify api restoreSiteDeploy`.
+7. `netlify api getSite` — `published_deploy.id` הוא הגרסה שפורסמה, ובודקים את
+   האתר עצמו. מדווחים, ומעבירים את המשימה ל"הושלם" (חוזה הלוח, סעיף 9).
 8. בדיקת אתר חי ב-Cowork.
 
-**חזרה אחורה:** אותו דבר עם גרסה קודמת שעבדה — גם באישור המייסד. אחר כך משימת תיקון.
+**חזרה אחורה:** `netlify api restoreSiteDeploy` לגרסה קודמת שעבדה — מיידי, בלי בנייה,
+וגם הוא באישור המייסד. אחר כך משימת תיקון.
 
 **השקה (פעם אחת):** בפרסום הראשון גם Project visibility → Public, באותו "כן".
 
