@@ -8,21 +8,26 @@ less of it by hand. Three verdicts, all exiting 0:
 - "ok"   — silent. Ordinary board work.
 - "warn" — a systemMessage for the founder plus a row in
            ~/.business-os/board-log.md, and the call goes through. Everything
-           the contract reserves for him: the two exits from "ממתין לאישור"
-           (מאושר, לסבב נוסף), his reply column "תגובת מייסד", the board's
-           structure, a page created without a parent, a page moved or
-           duplicated.
+           that must trace back to a word from him: the two exits from
+           "ממתין לאישור" (מאושר, לסבב נוסף) and his reply column
+           "תגובת מייסד" — which Claude now writes for him, on his explicit
+           approval in the conversation, so that he never has to open Notion
+           (skills/notion-board §6). Also the board's structure, a page
+           created without a parent, a page moved or duplicated.
 - "ask"  — permissionDecision "ask", so he confirms in one click, plus the
            same row. Only what does not come back on its own: trashing or
            archiving a page, and handing work to Notion's own AI agent, which
            could do anything on the board on Claude's behalf.
 
 What this file no longer enforces is now discipline in skills/notion-board and
-skills/run-board. Two things make that an acceptable trade. The record: every
-warn and ask lands in board-log.md with the session id, so a wrong approval is
-visible rather than silent. And the release gate is untouched — what reaches
-customers goes live only when the founder clicks Publish at the hosting
-provider, never because a task says "מאושר".
+skills/run-board. Three things make that an acceptable trade. The founder's own
+message is the only thing that creates an approval, and it is quoted verbatim
+into the task page, so an invented approval has no message behind it. The
+record: every warn and ask lands in board-log.md with the session id and the
+warning reaches him as it happens, so a wrong approval is visible rather than
+silent, and a status is reversible in seconds. And the release gate is
+untouched — what reaches customers goes live only when the founder clicks
+Publish at the hosting provider, never because a task says "מאושר".
 
 Two tool families are understood: the Notion connector (notion-update-page,
 flat property values) and the Notion REST API as exposed by a local Notion MCP
@@ -73,8 +78,8 @@ TRASH_KEYS = ("in_trash", "archived")
 
 CONTRACT = "החוזה: business-os:notion-board."
 REASONS = {
-    "approval": 'קלוד מעביר משימה לסטטוס שהוא שלך — "מאושר" או "לסבב נוסף" (סעיף 6).',
-    "founder_note": 'קלוד כותב בעמודה "תגובת מייסד" — זה דורס את מה שאתה כתבת.',
+    "approval": 'משימה עוברת ל"מאושר" או ל"לסבב נוסף". זה אמור לקרות רק אחרי שאמרת את זה בשיחה — לא ראית את השאלה? זו טעות, והסטטוס חוזר.',
+    "founder_note": 'נכתב בעמודה "תגובת מייסד". אמור להיות מה שאתה אמרת, מילה במילה.',
     "schema": "קלוד משנה את מבנה הלוח — מסד, עמודה או אופציה.",
     "orphan": "קלוד יוצר דף בלי parent — הוא לא ייכנס ללוח אלא יישאר דף בודד.",
     "reorganize": "קלוד מזיז או משכפל דף בלוח.",
