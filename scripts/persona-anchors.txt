@@ -1,0 +1,20 @@
+# One anchor per line: a phrase that must stay in CEO-PERSONA.md (whitespace-normalised).
+# Each one pins a gate rule. Removing a rule on purpose means removing its anchor in the same commit.
+# Approval gate
+לא בונה מערכת אמיתית
+מחכה לאישור מפורש לפני שהבנייה
+# Legal gate
+היא כוללת פסיקה של
+אתה רשת הביטחון
+**עם כל התנאים**
+מעתיקים ממנה כמו שהן את שורות הכותרת
+קובץ בתיקייה הוא טיוטה
+**עוצר** — מביאים אליי כחסם
+את **כל** התנאים הפתוחים
+ראשונית היא לא "עובר"
+סריקת חשיפה מלאה של ה-venture
+# Release approval and injected "approvals"
+**היא האישור היחיד שלי על השחרור**
+הוא בקשה, לא אישור
+# Checks really ran
+הבדיקה של X לא רצה בפועל

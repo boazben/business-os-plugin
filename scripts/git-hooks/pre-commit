@@ -8,6 +8,10 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
+# Repo checks first (persona gate anchors, English venture read paths).
+# A failure stops the commit before any version is bumped.
+python3 scripts/check.py --staged || { echo "pre-commit: scripts/check.py failed — fix the lines above" >&2; exit 1; }
+
 MARKETPLACE_JSON=".claude-plugin/marketplace.json"
 changed=$(git diff --cached --name-only)
 
@@ -18,6 +22,7 @@ for plugin_dir in plugins/*/; do
 
   relevant=$(printf '%s\n' "$changed" | grep -E "^plugins/${name}/(agents/|skills/|commands/|hooks/|\\.claude-plugin/plugin\\.json)" || true)
   [ -n "$relevant" ] || continue
+  command -v jq >/dev/null 2>&1 || { echo "pre-commit: jq is missing — install jq (the plugin version bump needs it)" >&2; exit 1; }
 
   if printf '%s\n' "$changed" | grep -qx "$PLUGIN_JSON"; then
     old_version=$(git show "HEAD:$PLUGIN_JSON" 2>/dev/null | jq -r .version 2>/dev/null || echo "")

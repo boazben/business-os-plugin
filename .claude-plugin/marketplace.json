@@ -8,27 +8,27 @@
     {
       "name": "business-os",
       "source": "./plugins/business-os",
-      "version": "0.1.30"
+      "version": "0.1.31"
     },
     {
       "name": "marketing-os",
       "source": "./plugins/marketing-os",
-      "version": "0.1.13"
+      "version": "0.1.14"
     },
     {
       "name": "rnd-os",
       "source": "./plugins/rnd-os",
-      "version": "0.1.17"
+      "version": "0.1.18"
     },
     {
       "name": "legal-os",
       "source": "./plugins/legal-os",
-      "version": "0.1.12"
+      "version": "0.1.13"
     },
     {
       "name": "design-os",
       "source": "./plugins/design-os",
-      "version": "0.1.15"
+      "version": "0.1.16"
     }
   ]
 }
