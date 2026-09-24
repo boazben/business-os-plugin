@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""design-os Gemini key guard — PreToolUse hook on every tool.
+"""design-os key guard — PreToolUse hook on every tool.
 
 The founder's Gemini API key lives in the environment or in
 `.business-os/gemini-api-key` in a project folder, and only the generate-image
-script reads it. This hook keeps it out of the conversation:
+script reads it. The Notion key lives in `.business-os/notion-token` (and in
+~/.business-os/notion-token on the computer), and only business-os:orient's
+scripts read it. This hook keeps both out of the conversation:
 
 - a string shaped like a Google API key in the input of any tool except
   Write/Edit is blocked (Firebase and Maps browser keys have the same shape and
-  belong in front-end code);
+  belong in front-end code); a string shaped like a Notion key is blocked in
+  every tool, Write/Edit included — it has no place in any file but its own;
 - Read, Write or Edit on the key file, and Write/Edit anywhere in .business-os
   (its .gitignore keeps the key out of git), are blocked;
 - Grep inside .business-os, on the key file, or for the key prefix is blocked;
@@ -29,11 +32,13 @@ import os
 import re
 import sys
 
-KEY_FILE = "gemini-api-key"
-KEY_FILE_RE = re.compile(re.escape(KEY_FILE), re.I)
+KEY_FILES = ("gemini-api-key", "notion-token")
+KEY_FILE_RE = re.compile("|".join(re.escape(k) for k in KEY_FILES), re.I)
 # Google API keys: classic "AIza" + 35 characters, or the newer "AQ." + ~50 characters.
-KEY_VALUE_RE = re.compile(r"AIza[0-9A-Za-z_\-]{30,}|AQ\.[0-9A-Za-z_\-]{40,}")
-KEY_PREFIXES = ("AIza", "AQ.")
+# Notion internal integration keys: "ntn_" (older ones "secret_") + ~40 characters.
+GOOGLE_VALUE_RE = re.compile(r"AIza[0-9A-Za-z_\-]{30,}|AQ\.[0-9A-Za-z_\-]{40,}")
+NOTION_VALUE_RE = re.compile(r"ntn_[0-9A-Za-z]{30,}|secret_[0-9A-Za-z]{40,}")
+KEY_PREFIXES = ("AIza", "AQ.", "ntn_")
 # Reading the variable's value, as opposed to naming it.
 KEY_VAR_READ_RE = re.compile(
     r"\$\{?!?GEMINI_API_KEY\b|\bprintenv\s+GEMINI_API_KEY\b|environ\b.{0,40}GEMINI_API_KEY"
@@ -56,13 +61,17 @@ DIR_READ_RE = re.compile(
 )
 FILE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 
-KEY_MSG = ("חסום: הפעולה עלולה לחשוף את מפתח ה-API של Gemini (קובץ המפתח ב-.business-os, ערך המשתנה, או "
-           "הדפסת משתני הסביבה). רק סקריפט התמונות משתמש במפתח; כדי לדעת אם יש מפתח — generate_image.py "
-           "--status. מתיקיית .business-os קוראים רק את ledger.md, בשמו המלא (או בכלי Read).")
+KEY_MSG = ("חסום: הפעולה עלולה לחשוף מפתח API — של Gemini או של Notion (קובץ המפתח ב-.business-os, ערך "
+           "המשתנה, או הדפסת משתני הסביבה). רק הסקריפטים משתמשים במפתחות: התמונות (generate_image.py "
+           "--status אומר אם יש מפתח) וההתמצאות (orient.py). מתיקיית .business-os קוראים רק את ledger.md, "
+           "בשמו המלא (או בכלי Read).")
 KEY_VALUE_MSG = ("חסום: הקלט מכיל מחרוזת שנראית כמו מפתח API של Google, והוא לא נשלח לפקודה, לסוכן או לשירות "
                  "חיצוני. מפתח דפדפן של Firebase או Maps, שנועד לקוד האתר — כותבים ישירות לקובץ עם Write. "
                  "אחרת, אם זה מפתח אמיתי — עצור, ודווח למייסד בראש הדיווח שצריך להחליף אותו ב-Google Cloud "
                  "(בלי לצטט אותו).")
+NOTION_VALUE_MSG = ("חסום: הקלט מכיל מחרוזת שנראית כמו מפתח Notion. הוא לא נכתב לשום קובץ ולא נשלח לשום מקום — "
+                    "רק הסקריפטים של orient קוראים אותו מהקובץ שלו. אם זה מפתח אמיתי — עצור, ודווח למייסד בראש "
+                    "הדיווח שצריך להחליף אותו ב-Notion → Integrations (בלי לצטט אותו).")
 
 
 def block(reason):
@@ -71,7 +80,7 @@ def block(reason):
 
 
 def reaches_key(command):
-    """True for a shell command that could read or reveal the Gemini API key."""
+    """True for a shell command that could read or reveal the Gemini or Notion key."""
     if (KEY_FILE_RE.search(command) or KEY_VAR_READ_RE.search(command) or any(k in command for k in KEY_PREFIXES)
             or ENV_DUMP_RE.search(command)):
         return True
@@ -86,7 +95,7 @@ def reaches_key(command):
 
 
 def is_key_file(path):
-    return os.path.basename(str(path or "")).lower() == KEY_FILE
+    return os.path.basename(str(path or "")).lower() in KEY_FILES
 
 
 def main():
@@ -102,7 +111,10 @@ def main():
     if not isinstance(tool_input, dict):
         tool_input = {}
 
-    if tool not in FILE_TOOLS and KEY_VALUE_RE.search(json.dumps(tool_input, ensure_ascii=False)):
+    text = json.dumps(tool_input, ensure_ascii=False)
+    if NOTION_VALUE_RE.search(text):
+        block(NOTION_VALUE_MSG)
+    if tool not in FILE_TOOLS and GOOGLE_VALUE_RE.search(text):
         block(KEY_VALUE_MSG)
 
     if tool == "Bash" or tool.endswith("device_bash"):

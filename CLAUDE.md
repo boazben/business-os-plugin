@@ -13,10 +13,13 @@
   plugin versions). Cloud sessions get the hooks from `.claude/settings.json` → `scripts/session-start.sh`.
   A commit here that bumps a plugin version is also pushed (post-commit).
 - **Tests:** `python3 scripts/tests/test_check.py`, `python3 plugins/business-os/hooks/tests/test_sync_persona.py`,
-  `python3 plugins/business-os/hooks/tests/test_board_gate.py`, `python3 plugins/rnd-os/hooks/tests/test_security_gate.py`.
+  `python3 plugins/business-os/hooks/tests/test_board_gate.py`, `python3 plugins/rnd-os/hooks/tests/test_security_gate.py`,
+  `python3 scripts/tests/test_orient.py`, `test_board.py`, `test_conditions.py` (same folder).
 - **No status files.** "Where are we" is computed at read time from the Notion board, the legal rulings
-  and the project page. Don't add a file that copies state from another owner. (An `orient` skill for this
-  is kept out of the repo until it passes the frozen 7-question test — BOS-49.)
+  and the project page. Don't add a file that copies state from another owner. `business-os:orient` does it:
+  code (`orient.py`, `board.py`, `conditions.py`) computes the full report, and the model answers with a few
+  lines of conclusions from it — Boaz's call (24.9), accepting a rare slip over a report he won't read. Facts
+  the model got wrong in the tests (what blocks, what waits and why, dates) belong in the code, not in rules.
 - **Context hygiene:** one topic per session. After a break of more than an hour in a long session,
   prefer a fresh session with a short handoff over resuming (the whole context is re-cached at 2×).
   Pass paths to subagents, not file contents.
