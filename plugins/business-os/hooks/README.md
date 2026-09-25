@@ -44,7 +44,6 @@ Consent is a file in this plugin, not a per-session setting. The plugin is the o
   - The hook forks a detached child and returns at once, with exit 0 and nothing on stdout.
   - The child waits for the transcript to stop growing (up to 5 s), then writes. This is needed because the last response lands after the event fires (seen on Claude Code 2.1.274).
   - If fork fails, the row is written inline without waiting.
-- Whether these events fire in Cowork is what BOS-49 check 5 finds out. If they don't, no finish rows appear there, and the CEO falls back to quoting each reviewer's verdict line.
 - Verified in Cowork on 2026-09-25 (BOS-49 check 5): SubagentStop and Stop both fire there, with transcripts and no zombie processes.
 
 ## What `board-gate.sh` does

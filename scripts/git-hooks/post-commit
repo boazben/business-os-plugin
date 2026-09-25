@@ -27,7 +27,10 @@ fi
 
 echo "post-commit: pushing to origin"
 if git remote get-url origin >/dev/null 2>&1; then
-  if git push 2>&1 | sed 's/^/  /'; then
+  # A new branch (a cloud session's claude/... branch) has no upstream yet: set it.
+  push=(git push)
+  git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 || push=(git push -u origin HEAD)
+  if "${push[@]}" 2>&1 | sed 's/^/  /'; then
     :
   else
     echo "  push failed (offline / no upstream?) — continuing without it" >&2
