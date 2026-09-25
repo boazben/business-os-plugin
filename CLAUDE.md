@@ -13,7 +13,8 @@
   plugin versions). Cloud sessions get the hooks from `.claude/settings.json` → `scripts/session-start.sh`.
   A commit here that bumps a plugin version is also pushed (post-commit).
 - **Tests:** `python3 scripts/tests/test_check.py`, `python3 plugins/business-os/hooks/tests/test_sync_persona.py`,
-  `python3 plugins/business-os/hooks/tests/test_board_gate.py`, `python3 plugins/rnd-os/hooks/tests/test_security_gate.py`,
+  `python3 plugins/business-os/hooks/tests/test_board_gate.py`, `python3 plugins/business-os/hooks/tests/test_ledger.py`,
+  `python3 plugins/rnd-os/hooks/tests/test_security_gate.py`,
   `python3 scripts/tests/test_orient.py`, `test_board.py`, `test_conditions.py` (same folder).
 - **No status files.** "Where are we" is computed at read time from the Notion board, the legal rulings
   and the project page. Don't add a file that copies state from another owner. `business-os:orient` does it:

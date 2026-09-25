@@ -13,7 +13,7 @@ It runs before every `Agent`, `Task`, `Bash` and `Read` call.
    - Each row: who called whom, a policy note, and the working-folder name. Prompt text is never logged.
    - It never blocks anything.
 
-## When it will not write
+## When the depth raise will not write
 
 The hook writes nothing unless **all** of these hold:
 
@@ -29,6 +29,22 @@ Consent is a file in this plugin, not a per-session setting. The plugin is the o
 
 - **To give consent:** the founder asks for `consent.json` to be committed. Its git history is the record of who approved it and when.
 - **To revoke:** delete the file, or set the value to `false`, and commit.
+
+## Finish rows (`SubagentStop`, `Stop`)
+
+`ledger.py --finish` adds a row to the same ledger when an agent finishes. This is the start of BOS-49 C15.
+
+- **Subagent (`SubagentStop`):** one row each time it finishes. The row has:
+  - who finished (`caller`) and `finished` (`target`);
+  - the line of its own last text that starts with `פסיקה או ממצא:` or `פסיקה:` (`policy`, 120 characters, `-` if there is none). The event's `last_assistant_message` is used only when the transcript has no such line, because it may include tool results;
+  - numbers from its transcript (`description`): model, API requests, tool calls, minutes, input, cache write, cache read and output tokens, and weighted units. The weights are the price ratios used in `scripts/telemetry`.
+- **Main conversation (`Stop`):** one `main total` row per session, with the main transcript's numbers only. The subagents' tokens are in their `finished` rows, so the cost of a run is the main total plus those rows. There are no minutes, because the span includes idle time. The row is rewritten and moved to the end on every turn. A session's last turn can miss its final response.
+- **Nothing else from the reply**, and never a field's value. When the transcript can't be read or parsed, the row says why. When the transcript is missing, the row also lists the names of the fields the hook received, which tells us what a new environment (Cowork) provides.
+- **Never in the way:**
+  - The hook forks a detached child and returns at once, with exit 0 and nothing on stdout.
+  - The child waits for the transcript to stop growing (up to 5 s), then writes. This is needed because the last response lands after the event fires (seen on Claude Code 2.1.274).
+  - If fork fails, the row is written inline without waiting.
+- Whether these events fire in Cowork is what BOS-49 check 5 finds out. If they don't, no finish rows appear there, and the CEO falls back to quoting each reviewer's verdict line.
 
 ## What `board-gate.sh` does
 
