@@ -25,10 +25,10 @@ def command(event):
     return HOOKS[event][0]["hooks"][0]["command"]
 
 
-def run(cmd, event, raw=None):
+def run(cmd, event, raw=None, **extra_env):
     """(exit code, stdout) of a hook command, run the way Claude Code runs it."""
     data = raw if raw is not None else json.dumps(event, ensure_ascii=False)
-    env = dict(os.environ, HOME=HOME, CLAUDE_PLUGIN_ROOT=str(PLUGIN))
+    env = dict(os.environ, HOME=HOME, CLAUDE_PLUGIN_ROOT=str(PLUGIN), **extra_env)
     p = subprocess.run(["sh", "-c", cmd], input=data.encode(), capture_output=True, env=env)
     return p.returncode, p.stdout.decode()
 
@@ -136,13 +136,38 @@ def main():
     finish(sub, dict(event, agent_id="a4", agent_transcript_path=str(odd_log)))
     case("a transcript that breaks the parser still gets a row", "no usage: error (TypeError)", rows()[-1][5])
 
+    # As Cowork writes it (25.9): each line keeps only the response's opening output count.
+    cowork_log = base / "s1" / "subagents" / "agent-a5.jsonl"
+    start = {"input_tokens": 3, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+    cowork_log.write_text("\n".join([
+        line("c1", "2026-09-25T10:00:00.000Z", [{"type": "text", "text": "א" * 300}], dict(start, output_tokens=4)),
+        line("c1", "2026-09-25T10:00:01.000Z", [{"type": "tool_use", "id": "t9", "name": "Glob", "input": {}}],
+             dict(start, output_tokens=4)),
+        line("c2", "2026-09-25T10:00:02.000Z", [{"type": "text", "text": "ב" * 30}], dict(start, output_tokens=1)),
+    ]) + "\n", encoding="utf-8")
+    finish(sub, dict(event, agent_id="a5", agent_transcript_path=str(cowork_log)))
+    case("opening-only output counts are estimated from length, marked ~", True,
+         " · out ~111 · " in rows()[-1][5])  # (300 + len("{}")) / 3 = 101, 30 / 3 = 10
+
+    repeat_log = base / "s1" / "subagents" / "agent-a6.jsonl"
+    text = [{"type": "text", "text": "ג" * 90}]
+    repeat_log.write_text("\n".join([
+        line("r1", "2026-09-25T10:00:00.000Z", text, dict(start, output_tokens=2)),
+        line("r1", "2026-09-25T10:00:01.000Z", text, dict(start, output_tokens=2)),  # the same block again
+        line("r2", "2026-09-25T10:00:02.000Z", [{"type": "text", "text": "ok"}], dict(start, output_tokens=40)),
+        line("r2", "2026-09-25T10:00:03.000Z", [{"type": "text", "text": "ok"}], dict(start, output_tokens=7)),
+    ]) + "\n", encoding="utf-8")
+    finish(sub, dict(event, agent_id="a6", agent_transcript_path=str(repeat_log)))
+    case("a block repeated on two lines counts once; the higher output count is kept", True,
+         " · out ~70 · " in rows()[-1][5])  # 90 / 3 = 30 estimated, + 40 kept over the later 7
+
     late_log = base / "s1" / "subagents" / "agent-a3.jsonl"
     transcript(late_log, reply)
     lines = late_log.read_text(encoding="utf-8").splitlines(keepends=True)
     late_log.write_text("".join(lines[:3]), encoding="utf-8")  # the last response is not written yet
     n = len(rows())
     t0 = time.monotonic()
-    code = run(sub, dict(event, agent_id="a3", agent_transcript_path=str(late_log)))
+    code = run(sub, dict(event, agent_id="a3", agent_transcript_path=str(late_log)), BUSINESS_OS_SETTLE_QUIET="2")
     took = time.monotonic() - t0
     time.sleep(0.2)
     with open(late_log, "a", encoding="utf-8") as f:
@@ -160,13 +185,19 @@ def main():
     got = rows()[-1][5]
     case("no transcript: says so, with field names", True,
          got.startswith("no usage: transcript not found (fields: agent_id,agent_transcript_path,agent_type,cwd,"))
+    case("...the whole field list, past 120 characters", True, len(got) > 120 and got.endswith("transcript_path)"))
 
     print("== the main conversation stops")
     case("exit 0, prints nothing", (0, ""),
          finish(stop, {"session_id": "s1aaaaaaaaaa", "transcript_path": str(main_log), "cwd": "/root/x/wellness",
                     "hook_event_name": "Stop", "stop_hook_active": False}))
     finish(sub, event)
+    call_ev = {"session_id": "s1aaaaaaaaaa", "cwd": "/root/x/wellness", "tool_name": "Agent",
+               "tool_input": {"subagent_type": "legal-os:legal-lead", "description": "קריאה לפני הסיכום"}}
+    subprocess.run([sys.executable, str(PLUGIN / "hooks" / "ledger.py")], input=json.dumps(call_ev).encode(),
+                   env=dict(os.environ, HOME=HOME), check=True)  # main's own call row, the CEO's proof
     before = rows()
+    case("the fixture has main's call row", True, any(r[2] == "main" and r[3] == "legal-os:legal-lead" for r in before))
     finish(stop, {"session_id": "s1aaaaaaaaaa", "transcript_path": str(main_log), "hook_event_name": "Stop"})
     totals = [r for r in rows() if r[3] == "main total"]
     case("one main-total row per session", 1, len(totals))
@@ -194,6 +225,9 @@ def main():
           "tool_input": {"subagent_type": "legal-os:legal-lead", "description": "בדיקה", "prompt": "פרומפט פרטי"}}
     subprocess.run(call, input=json.dumps(ev).encode(), env=dict(os.environ, HOME=HOME), check=True)
     case("call row", ["main", "legal-os:legal-lead", "ok", "בדיקה"], rows()[-1][2:6])
+    long_ev = dict(ev, tool_input=dict(ev["tool_input"], description="ת" * 200))
+    subprocess.run(call, input=json.dumps(long_ev).encode(), env=dict(os.environ, HOME=HOME), check=True)
+    case("a call row's description stays cut at 120", 120, len(rows()[-1][5]))
     case("prompt is not recorded", False, "פרומפט פרטי" in (Path(HOME) / ".business-os" / "ledger.md").read_text(encoding="utf-8"))
 
     print("== the ledger stays under 1 MB")

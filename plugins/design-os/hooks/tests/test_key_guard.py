@@ -41,6 +41,8 @@ check("Google browser key may be written to front-end code", "Write", {"file_pat
 check("Google key value in a command", "Bash", {"command": f"echo {GOOGLE}"}, 2)
 check("running orient is allowed", "Bash", {"command": 'python3 orient.py --folder "w" --venture "/v"'}, 0)
 check("reading the ledger is allowed", "Bash", {"command": "cat ~/.business-os/ledger.md"}, 0)
+check("the persona's ledger read is allowed", "Bash",
+      {"command": 'grep -v "main total" ~/.business-os/ledger.md | tail -n 80'}, 0)
 check("staging the project folder is allowed", "mcp__remote-devices__device_stage_files", {"paths": ["משפטי"]}, 0)
 
 print(f"\n{len(failures)} failed" if failures else "\nall passed")

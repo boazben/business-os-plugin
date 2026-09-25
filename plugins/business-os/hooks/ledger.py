@@ -47,7 +47,18 @@ MAIN_TOTAL = "main total"
 WEIGHTS = {"inp": 1, "cw5": 1.25, "cw1h": 2, "cr": 0.1, "out": 5}
 # The transcript is still being written when the hook fires (seen live on Claude Code 2.1.274: a
 # subagent's last response landed after SubagentStop ran), so the row waits for it to hold still.
-SETTLE_QUIET, SETTLE_LIMIT = 0.5, 5.0
+SETTLE_LIMIT = 5.0
+try:  # the tests widen it, so a slow machine can't make them flaky
+    SETTLE_QUIET = float(os.environ.get("BUSINESS_OS_SETTLE_QUIET", 0.5))
+except ValueError:
+    SETTLE_QUIET = 0.5
+# Some transcripts keep only a response's opening output count: seen 25.9.2026 in a Cowork
+# Explore subagent ([[4, 4, 4], [1, 1], [1], [4, 4]] per response) and locally in about 1 in 5
+# transcripts (Claude Code 2.1.234-2.1.280, every model). A response whose recorded output is below
+# one token per MIN_CHARS_PER_TOKEN characters of its content cannot be a final count (no text runs
+# at 8 characters a token), so its output is estimated at CHARS_PER_TOKEN — about right across
+# Hebrew, English and JSON — and the row shows "out ~N".
+MIN_CHARS_PER_TOKEN, CHARS_PER_TOKEN = 8, 3
 VERDICT_RE = re.compile(r"^[\s>*_#-]*(פסיקה או ממצא|פסיקה)[*_]*\s*:")
 
 
@@ -103,9 +114,9 @@ def short(n):
 
 
 def transcript_stats(path):
-    """Numbers from one transcript. Usage is kept per message id with the last line winning:
-    one API response spans several lines, and only the last carries the final output count."""
-    usage, models, tools = {}, {}, set()
+    """Numbers from one transcript. One API response spans several lines; per message id the line
+    with the highest output count is kept, and the content blocks are counted once each."""
+    usage, models, blocks, tools = {}, {}, {}, set()
     first = last = None
     last_text = ""
     with open(path, encoding="utf-8", errors="replace") as f:
@@ -126,21 +137,30 @@ def transcript_stats(path):
                 first, last = first or ts, ts
             except ValueError:
                 pass
+            mid = m.get("id") or d.get("requestId") or f"line-{len(usage)}"
             for c in m.get("content") or []:
                 if not isinstance(c, dict):
                     continue
+                if c.get("type") == "tool_use":
+                    size = len(json.dumps(c.get("input") or {}, ensure_ascii=False))
+                else:
+                    size = len(str(c.get("text") or c.get("thinking") or ""))
+                key = c.get("id") or (c.get("type"), size, str(c.get("text") or c.get("thinking") or "")[:40])
+                blocks.setdefault(mid, {})[key] = size
                 if c.get("type") == "tool_use" and c.get("id"):
                     tools.add(c["id"])
                 elif c.get("type") == "text" and (c.get("text") or "").strip():
                     last_text = c["text"]
             u = m.get("usage")
             if isinstance(u, dict):
-                mid = m.get("id") or d.get("requestId") or f"line-{len(usage)}"
-                usage[mid] = u
+                kept = usage.get(mid)
+                if kept is None or (u.get("output_tokens") or 0) >= (kept.get("output_tokens") or 0):
+                    usage[mid] = u
                 models[mid] = m.get("model") or "?"
 
     t = dict.fromkeys(WEIGHTS, 0)
-    for u in usage.values():
+    estimated = False
+    for mid, u in usage.items():
         cw = u.get("cache_creation_input_tokens") or 0
         parts = u.get("cache_creation") or {}
         c5 = parts.get("ephemeral_5m_input_tokens") or 0
@@ -151,7 +171,11 @@ def transcript_stats(path):
         t["cw5"] += c5
         t["cw1h"] += c1
         t["cr"] += u.get("cache_read_input_tokens") or 0
-        t["out"] += u.get("output_tokens") or 0
+        out = u.get("output_tokens") or 0
+        chars = sum(blocks.get(mid, {}).values())
+        if out * MIN_CHARS_PER_TOKEN < chars:
+            out, estimated = round(chars / CHARS_PER_TOKEN), True
+        t["out"] += out
     model = collections.Counter(models.values()).most_common(1)
     return {
         "model": re.sub(r"^claude-", "", model[0][0]) if model else "?",
@@ -159,6 +183,7 @@ def transcript_stats(path):
         "tools": len(tools),
         "minutes": round((last - first).total_seconds() / 60) if first and last else 0,
         "tokens": t,
+        "out_estimated": estimated,
         "units": sum(t[k] * w for k, w in WEIGHTS.items()),
         "last_text": last_text,
     }
@@ -189,7 +214,7 @@ def describe(stats, minutes=True):
         f"{stats['model']} · {stats['requests']} requests · {stats['tools']} tools"
         + (f" · {stats['minutes']}m" if minutes else "")
         + f" · in {short(t['inp'])} · cache write {short(t['cw5'] + t['cw1h'])}"
-        f" · cache read {short(t['cr'])} · out {short(t['out'])} · {short(stats['units'])} units"
+        f" · cache read {short(t['cr'])} · out {'~' if stats['out_estimated'] else ''}{short(t['out'])} · {short(stats['units'])} units"
     )
 
 
@@ -313,7 +338,8 @@ def main():
 
     session = (event.get("session_id") or "")[:8]
     drop = None
-    if "--finish" in sys.argv[1:]:
+    finish = "--finish" in sys.argv[1:]
+    if finish:
         values = finish_row(event, wait=detach())
         if values[1] == MAIN_TOTAL:
             drop = main_total_of(session)
@@ -329,7 +355,7 @@ def main():
 
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     folder = os.path.basename((event.get("cwd") or "").rstrip("/"))
-    limits = (120, 120, 120, 120, 120, 300, 120)
+    limits = (120, 120, 120, 120, 120, 300 if finish else 120, 120)
     row = "| " + " | ".join(cell(v, n) for v, n in zip((now, session, *values, folder), limits)) + " |\n"
     write(os.path.join(home, ".business-os", "ledger.md"), row, drop)
 
