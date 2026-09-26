@@ -1,4 +1,4 @@
-"""scripts/check.py: gate anchors in the persona, and the English read-path denylist.
+"""scripts/check.py: gate anchors in the persona, the English read-path denylist, and the shared prompt sections.
 
 Run: python3 scripts/tests/test_check.py
 """
@@ -45,6 +45,37 @@ with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-
     fh.write("# persona without gates\n")
 r = subprocess.run([sys.executable, str(ROOT / "scripts" / "check.py"), "--persona", fh.name], capture_output=True, text=True)
 check("--persona on a gutted file exits 1 with reasons", r.returncode == 1 and "gate anchor missing" in r.stderr)
+
+# 3. shared prompt sections (BOS-49 C9/C10)
+check("the current tree's shared sections match their sources", ck.check_shared() == [])
+
+
+def tree(**changes):
+    """A reader over the working tree with some files replaced (None = absent)."""
+    def read(rel):
+        if rel in changes:
+            return changes[rel]
+        path = ROOT / rel
+        return path.read_text(encoding="utf-8") if path.exists() else None
+    return read
+
+
+legal_lead = (ROOT / "plugins/legal-os/agents/legal-lead.md").read_text(encoding="utf-8")
+fails = ck.check_shared(tree(**{"plugins/legal-os/agents/legal-lead.md": legal_lead.replace("תקרה: 3 סבבי ביקורת", "תקרה: 5 סבבי ביקורת")}))
+check("a head's copy edited alone is caught", any("legal-lead.md: shared section differs" in f for f in fails))
+heading = (ROOT / ck.HEAD_RULES).read_text(encoding="utf-8").splitlines()[0]
+fails = ck.check_shared(tree(**{"plugins/legal-os/agents/legal-lead.md": legal_lead.replace(heading, "## משהו אחר")}))
+check("a head without the section is caught", any("legal-lead.md: shared section missing" in f for f in fails))
+verifier = (ROOT / "plugins/legal-os/agents/legal-verifier.md").read_text(encoding="utf-8")
+contract_heading = (ROOT / ck.REVIEWER_CONTRACT).read_text(encoding="utf-8").splitlines()[0]
+fails = ck.check_shared(tree(**{"plugins/legal-os/agents/legal-verifier.md": verifier.replace(contract_heading, "## פלט")}))
+check("a reviewer without the verdict contract is caught", any("legal-verifier.md: shared section missing" in f for f in fails))
+report = (ROOT / ck.LEDGER_REPORT).read_text(encoding="utf-8")
+fails = ck.check_shared(tree(**{ck.LEDGER_REPORT: report.replace('"brand-guardian", ', "")}))
+check("an agent with the contract that report.py does not check is caught", any("REVIEWERS lacks brand-guardian" in f for f in fails))
+fails = ck.check_shared(tree(**{ck.HEAD_RULES: None}))
+check("a missing source is caught", any("head-review-rules.md: missing" in f for f in fails))
+
 r = subprocess.run([sys.executable, str(ROOT / "scripts" / "check.py")], capture_output=True, text=True)
 check("the repo as it is passes (exit 0)", r.returncode == 0)
 

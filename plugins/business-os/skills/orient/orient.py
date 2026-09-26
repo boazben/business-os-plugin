@@ -120,6 +120,32 @@ def legal(venture, rows, project_url, bodies):
     return out, unchecked
 
 
+SYSTEM_WAITING = (
+    # A run that changed a file which already existed returns it here instead of over the
+    # founder's copy (BOS-49 C17, until venture_check merges): someone has to merge it.
+    ("incoming", "מחכה למיזוג — ריצה שינתה קובץ שכבר היה בתיקייה"),
+    # A run that failed to read Notion writes here; a later good run moves it to טופל/.
+    ("תקלות", "תקלה שלא טופלה"),
+)
+
+
+def system_waiting(venture):
+    """(files waiting in _מערכת/incoming and _מערכת/תקלות, not their טופל/ folders; notes). In
+    Cowork the folder is a staged copy, so a folder that is not there was maybe not brought: that
+    is "not checked", never "nothing waiting"."""
+    lines, notes = [], []
+    staged = str(venture).startswith("/mnt/user-data/")
+    for sub, what in SYSTEM_WAITING:
+        base = pathlib.Path(venture) / "_מערכת" / sub
+        if staged and not base.is_dir():
+            notes.append(f"- `_מערכת/{sub}/` — לא נבדק: לא הובא לענן, או ריק")
+        if base.is_dir():
+            for p in sorted(base.rglob("*")):
+                if p.is_file() and "טופל" not in p.relative_to(base).parts:
+                    lines.append(f"- `{p.relative_to(venture)}` — {what}")
+    return lines, notes
+
+
 def report(folder, venture):
     every, project, bodies, project_text = board.fetch(folder)
     rows = [r for r in every if not r.get("מחוץ לתצוגה")]  # the open tasks; the rest are dependencies read by id
@@ -232,12 +258,18 @@ def report(folder, venture):
         text = f"{r.get('תיאור', '')} {r.get('תוצאה', '')}"
         out.append(f"- {board.fmt(r)}" + (" — כתוב בה 'לא חוסם'" if "לא חוסם" in text else ""))
     out += [] if loose else ["- אין"]
+
+    waiting, unchecked_system = system_waiting(venture)
+    out.append("\n## מחכה בתיקיית המערכת — קובץ שריצה שמה בצד, ותקלה שלא טופלה")
+    out += waiting + unchecked_system or ["- אין"]
     # The bottom line and the contents are computed too: every line a model wrote above the
     # report in the tests was where the mistakes were.
     bottom = summary[:] or ["אין אבן דרך פתוחה בפרויקט"]
     if dated:
         r = dated[0]
         bottom.append(f"היעד הקרוב בלוח: BOS-{r.get('מזהה')} {r.get('שם')} ({board.day(r['date:יעד:start'])}, {r.get('סטטוס')})")
+    if waiting:
+        bottom.append(f"{len(waiting)} קבצים מחכים ב-_מערכת (מיזוג או תקלה)")
     heads = [l.lstrip("\n")[3:].split(" — ")[0] for l in out if l.lstrip("\n").startswith("## ")]
     top = [f"**שורה תחתונה:** {'; '.join(bottom)}.",
            "**בדוח:** " + " · ".join(heads)]

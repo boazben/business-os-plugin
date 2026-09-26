@@ -1,19 +1,36 @@
 """business-os — the delegation ledger at $HOME/.business-os/ledger.md.
 
-Two kinds of row. Neither ever records prompt or reply text, and neither
-blocks anything: the hooks run this with stderr discarded and exit 0, so a
-failure here costs a missing row, not a broken session.
+Three kinds of row. None ever records prompt or reply text, and none blocks
+anything: the hooks run this with stderr discarded and exit 0, so a failure
+here costs a missing row, not a broken session.
 
 - A call (PreToolUse on Agent/Task, via pre-tool.sh): when, which session,
-  who called whom, and whether that pairing fits the org structure.
+  who called whom, and whether that pairing fits the org structure (and a
+  flag when a team member's brief lacks the "כללי עבודה:" line). Plus a short
+  sha256 of the brief itself ("brief@1a2b3c4d") and, for every file the brief
+  names that exists, its name and a short sha256 ("saw name@1a2b3c4d") — which
+  version of a file each agent was given.
 - A finish (`--finish`, on SubagentStop and Stop): who finished, and from its
   transcript only numbers — model, tool calls, minutes, tokens — plus the line
   of its last reply that starts with "פסיקה או ממצא:" or "פסיקה:" (cut to 120
-  characters). A subagent gets a row each time it finishes; the main
+  characters), and the hash of the brief it was started with — the first
+  message of its transcript, which is the call's prompt — so a finish is tied to
+  its own call, not to another call of the same agent. A subagent gets a row each time it finishes; the main
   conversation gets one "main total" row per session — its own tokens only,
   the subagents are in their rows — rewritten and moved to the end on every
   turn. A finish whose transcript cannot be read says why, with the names (not
   the values) of the fields the hook was given.
+- A return, on Cowork's device_commit_files: `--commit` (PreToolUse) writes
+  "returning" before the call; after it, `--returned` (PostToolUse, which fires
+  only on success) writes "returned" — or "return failed" if the response says
+  isError — and `--failed` (PostToolUseFailure) writes "return failed". Each lists the name every
+  file gets in the project folder and a short sha256 of the content sent, so a
+  script can count what was made in the cloud and never returned.
+
+In Cowork (a /mnt/user-data/outputs folder exists) every row is also written
+to a file of its own for the session, under outputs/business-os-ledger/, which
+the CEO returns to the project folder in one call at the end of a run: the
+cloud copy is gone when the session ends.
 
 Department heads follow the `<x>-os:<x>-lead` naming convention, so a new
 department needs no change here. platform-lead is the one exception to the
@@ -23,6 +40,8 @@ rnd-os:security-lead, which only rnd-lead calls.
 import collections
 import datetime
 import fcntl
+import glob
+import hashlib
 import json
 import os
 import re
@@ -42,6 +61,27 @@ HEADER = (
 )
 FINISHED = "finished"
 MAIN_TOTAL = "main total"
+RETURNING, RETURNED, RETURN_FAILED = "returning", "returned", "return failed"
+SAW = " · saw "
+BRIEF = " · brief@"
+# A brief names a handful of files; a cap keeps a pasted listing from turning one row into a page.
+MAX_BRIEF_FILES = 20
+# The hook runs before the agent starts, so reading stays small: a file past MAX_HASHED, or past
+# HASH_BUDGET read in one call, is named "@big" and not read; at most MAX_CANDIDATES path starts are tried.
+MAX_HASHED = 50_000_000
+HASH_BUDGET = 200_000_000
+MAX_CANDIDATES = 300
+# Where a path starts in a brief: after whitespace, a quote (also ״), a bracket, ':', '=', markdown
+# emphasis, or a Hebrew prefix letter and hyphen ("ב-/mnt/..."); never "//" (a URL).
+PATH_START = re.compile(r"(?:(?<![^\s`'\"(<\[{:=*_\u05f4])|(?<=[\u05d0-\u05ea]-))(?:~/|/(?!/))")
+# What may follow a file name in running text; "." "," ";" ":" "!" "?" only before a space or
+# the end, so "/v/ad.md" is never read as a file "/v/ad".
+PATH_END = set("`'\")]}>*_—\u05f4") | {" ", "\t"}
+PATH_PUNCT = set(".,;:!?")
+MAX_PATH_CHARS = 1024
+SESSION_DIR = "business-os-ledger"
+# The line every brief to a team member carries (shared/head-review-rules.md); a call without it is flagged.
+WORK_RULES = "כללי עבודה:"
 # Price ratios to plain input, as in scripts/telemetry: cache read 0.1,
 # 5-minute cache write 1.25, 1-hour cache write 2, output 5.
 WEIGHTS = {"inp": 1, "cw5": 1.25, "cw1h": 2, "cr": 0.1, "out": 5}
@@ -111,6 +151,139 @@ def short(n):
     if n >= 1_000:
         return f"{n / 1_000:.1f}K"
     return str(n)
+
+
+_budget = [HASH_BUDGET]
+
+
+def short_hash(path):
+    """The first 8 hex digits of the file's sha256; "big" past MAX_HASHED or the call's HASH_BUDGET,
+    None if unreadable."""
+    try:
+        size = os.path.getsize(path)
+        if size > MAX_HASHED or size > _budget[0]:
+            return "big"
+        _budget[0] -= size
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()[:8]
+    except OSError:
+        return None
+
+
+def path_at(text, listing):
+    """The existing file whose path starts `text` (which starts with "/" or "~/"), or None. Folder
+    and file names may contain spaces, so the path is not cut at a space: the folders are walked
+    while they exist, and the file is the longest name in the last folder that the rest of the text
+    starts with, followed by an end of path. A stat per folder and one listing, however long the line."""
+    text = text[:MAX_PATH_CHARS]
+    if text.startswith("~/"):
+        text = os.path.expanduser("~") + text[1:]
+    folder_end = 0
+    for i, ch in enumerate(text):
+        if ch == "/" and i > 0:
+            if os.path.isdir(text[:i]):
+                folder_end = i
+            else:
+                break
+    folder, rest = text[:folder_end] or "/", text[folder_end + 1:]
+    if folder not in listing:
+        try:
+            listing[folder] = os.listdir(folder)
+        except OSError:
+            listing[folder] = []
+    best = None
+    for name in listing[folder]:
+        after = rest[len(name):len(name) + 2]
+        ends = not after or after[0] in PATH_END or (after[0] in PATH_PUNCT and (len(after) == 1 or after[1] in PATH_END))
+        if rest.startswith(name) and ends:
+            if (best is None or len(name) > len(best)) and os.path.isfile(os.path.join(folder, name)):
+                best = name
+    return os.path.join(folder, best) if best else None
+
+
+def brief_paths(text, cwd=None):
+    """The existing files a brief names, in order, at most MAX_BRIEF_FILES: absolute and ~ paths
+    anywhere (path_at), and a relative path inside backticks, resolved against cwd."""
+    found, seen, listing = [], set(), {}
+
+    def add(path):
+        real = os.path.realpath(path)
+        if real not in seen:
+            seen.add(real)
+            found.append(path)
+
+    tried = 0
+    for line in (text or "").splitlines():
+        if len(found) >= MAX_BRIEF_FILES or tried >= MAX_CANDIDATES:
+            break
+        for m in PATH_START.finditer(line):
+            tried += 1
+            if tried > MAX_CANDIDATES:
+                break
+            path = path_at(line[m.start():], listing)
+            if path:
+                add(path)
+        if cwd:
+            for span in re.findall(r"`([^`]*)`", line):  # backtick pairs, in order
+                rel = span.strip()
+                if "/" in rel and not rel.startswith(("/", "~")) and os.path.isfile(os.path.join(cwd, rel)):
+                    add(os.path.join(cwd, rel))
+    return found[:MAX_BRIEF_FILES]
+
+
+def text_hash(text):
+    return hashlib.sha256(str(text).strip().encode("utf-8")).hexdigest()[:8]
+
+
+def first_prompt(path):
+    """The first user message of a transcript: for a subagent, the prompt it was called with."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for n, line in enumerate(f):
+            if n > 50:
+                return None
+            if '"user"' not in line:
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(d, dict) and d.get("type") == "user":
+                c = (d.get("message") or {}).get("content")
+                if isinstance(c, list):
+                    c = "".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
+                return c if isinstance(c, str) else None
+    return None
+
+
+def tagged(name, path):
+    return f"{cell(name, 255)}@{short_hash(path) or 'unreadable'}"  # a whole name: review matches on it
+
+
+def returned_files(tool_input):
+    """[(name in the project folder, staged path)] from a device_commit_files call. The files come
+    as [{devicePath, stagedPath}]; anything else in the list is skipped."""
+    out = []
+    for f in tool_input.get("files") or []:
+        if not isinstance(f, dict):
+            continue
+        staged = f.get("stagedPath") or f.get("staged_path") or ""
+        device = f.get("devicePath") or f.get("device_path") or staged
+        if staged:
+            out.append((re.split(r"[\\/]", str(device).rstrip("\\/"))[-1], str(staged)))
+    return out
+
+
+def session_copy(session, today):
+    """This session's own ledger file in Cowork's outputs folder, or None outside Cowork."""
+    outputs = os.environ.get("BUSINESS_OS_OUTPUTS") or "/mnt/user-data/outputs"
+    if not session or not os.path.isdir(outputs):
+        return None
+    folder = os.path.join(outputs, SESSION_DIR)
+    existing = sorted(glob.glob(os.path.join(glob.escape(folder), f"*-{glob.escape(session)}.md")))
+    return existing[0] if existing else os.path.join(folder, f"{today}-{session}.md")
 
 
 def transcript_stats(path):
@@ -272,7 +445,15 @@ def finish_row(event, wait=True):
     except Exception as e:  # a row that says so, not a missing row that reads as "the hook never ran"
         return who, target, verdict_line(reply) or "-", f"no usage: error ({type(e).__name__})"
     verdict = (verdict_line(stats["last_text"]) or verdict_line(reply)) if subagent else ""
-    return who, target, verdict or "-", describe(stats, minutes=subagent)
+    numbers = describe(stats, minutes=subagent)
+    if subagent:
+        try:
+            prompt = first_prompt(path)
+        except OSError:
+            prompt = None
+        if prompt:
+            numbers += BRIEF + text_hash(prompt)
+    return who, target, verdict or "-", numbers
 
 
 def main_total_of(session):
@@ -338,26 +519,52 @@ def main():
 
     session = (event.get("session_id") or "")[:8]
     drop = None
-    finish = "--finish" in sys.argv[1:]
-    if finish:
+    args = sys.argv[1:]
+    tool_input = event.get("tool_input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    caller = event.get("agent_type") or "main"
+    if "--finish" in args:
         values = finish_row(event, wait=detach())
         if values[1] == MAIN_TOTAL:
             drop = main_total_of(session)
+        limit = 300
+    elif "--commit" in args or "--returned" in args or "--failed" in args:
+        files = returned_files(tool_input)
+        target = RETURNING
+        if "--returned" in args:
+            response = event.get("tool_response")
+            target = RETURN_FAILED if isinstance(response, dict) and response.get("isError") is True else RETURNED
+        elif "--failed" in args:
+            target = RETURN_FAILED
+        values = (caller, target, f"files: {len(files)}", ", ".join(tagged(n, p) for n, p in files) or "-")
+        limit = 3000
     else:
-        tool_input = event.get("tool_input") or {}
-        caller = event.get("agent_type") or "main"
         target = tool_input.get("subagent_type") or "general-purpose"
+        prompt = str(tool_input.get("prompt") or "")
         verdict = policy(caller, target)
+        if split(target)[0] and not is_head(target) and WORK_RULES not in prompt:
+            verdict = f"{verdict}; flag: brief without '{WORK_RULES}'"
         note = os.environ.get("BUSINESS_OS_NOTE")
         if note:
             verdict = f"{verdict}; {note}"
-        values = (caller, target, verdict, tool_input.get("description") or "")
+        description = cell(tool_input.get("description") or "")
+        if prompt.strip():
+            description += BRIEF + text_hash(prompt)
+        saw = brief_paths(prompt, event.get("cwd"))
+        if saw:
+            description += SAW + ", ".join(tagged(os.path.basename(p), p) for p in saw)
+        values = (caller, target, verdict, description)
+        limit = 1500
 
-    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    utc = datetime.datetime.now(datetime.timezone.utc)
     folder = os.path.basename((event.get("cwd") or "").rstrip("/"))
-    limits = (120, 120, 120, 120, 120, 300 if finish else 120, 120)
-    row = "| " + " | ".join(cell(v, n) for v, n in zip((now, session, *values, folder), limits)) + " |\n"
+    limits = (120, 120, 120, 120, 120, limit, 120)
+    row = "| " + " | ".join(cell(v, n) for v, n in zip((utc.strftime("%Y-%m-%d %H:%M:%S"), session, *values, folder), limits)) + " |\n"
     write(os.path.join(home, ".business-os", "ledger.md"), row, drop)
+    copy = session_copy(session, utc.strftime("%Y-%m-%d"))
+    if copy:
+        write(copy, row, drop)
 
 
 if __name__ == "__main__":

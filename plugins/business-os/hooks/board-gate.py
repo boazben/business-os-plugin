@@ -3,7 +3,7 @@
 Reads a PreToolUse payload for a Notion tool on stdin. It does not block board
 work. The founder asked for a gate that warns and keeps a record instead of
 standing in the way, so that Claude can do more of the board work and he does
-less of it by hand. Three verdicts, all exiting 0:
+less of it by hand. Four verdicts, all exiting 0:
 
 - "ok"   — silent. Ordinary board work.
 - "warn" — a systemMessage for the founder plus a row in
@@ -18,6 +18,12 @@ less of it by hand. Three verdicts, all exiting 0:
            same row. Only what does not come back on its own: trashing or
            archiving a page, and handing work to Notion's own AI agent, which
            could do anything on the board on Claude's behalf.
+- "deny" — the one thing it refuses, with the fix in the reason: a write that
+           points the board at a Cowork cloud path (/home/claude,
+           /mnt/user-data). That file is gone when the session ends, so the
+           board would reference nothing (BOS-49 C17). Return the file to the
+           project folder first and write that path. A path already lost is
+           written with the C13 note "נתיב ענן — …", which lets it through.
 
 What this file no longer enforces is now discipline in skills/notion-board and
 skills/run-board. Three things make that an acceptable trade. The founder's own
@@ -75,6 +81,16 @@ REORGANIZE_RE = re.compile(r"(move-pages|move-page|duplicate-page)$")
 CREATE_PAGE_RE = re.compile(r"(create-pages|post-page|create-a-page)$")
 UPDATE_PAGE_RE = re.compile(r"(update-page|patch-page|update-a-page)$")
 TRASH_KEYS = ("in_trash", "archived")
+# Any write: a page, its content, a comment. Searches and queries are POSTs in the REST API.
+WRITE_RE = re.compile(r"(create|update|patch|post|append|insert|replace)")
+READ_RE = re.compile(r"(search|query|retrieve|fetch|get-)")
+# A cloud path to something: the root, then at least one more part. The roots alone — say, in a
+# task that describes this rule — are not a link to a file.
+CLOUD_RE = re.compile(r"(?:/home/claude|/mnt/user-data)/[^\s\"'`)\]|,]+")
+LOST_NOTE = "נתיב ענן"
+# The C13 note marks the path it follows, not everything in the text. A path may contain spaces,
+# where the match stops, so the note is looked for along the rest of that line.
+LOST_NOTE_REACH = 300
 
 CONTRACT = "החוזה: business-os:notion-board."
 REASONS = {
@@ -85,6 +101,9 @@ REASONS = {
     "reorganize": "קלוד מזיז או משכפל דף בלוח.",
     "trash": "קלוד מוחק או מעביר לסל דף בלוח.",
     "notion_ai": "קלוד מעביר עבודה ל-Notion AI, שיכול לעשות כל דבר בלוח בשמו.",
+    "cloud_path": "הכתיבה ללוח מפנה לנתיב בענן ({path}), שנמחק בסוף השיחה. קודם להחזיר את הקובץ לתיקיית"
+                  " הפרויקט (device_commit_files), ואז לכתוב ללוח את הנתיב בתיקייה. קובץ ענן שכבר אבד —"
+                  " כותבים לידו \"(נתיב ענן — הקובץ לא נשמר, <תאריך>)\".",
 }
 LOG_PATH = (".business-os", "board-log.md")
 LOG_HEADER = (
@@ -182,8 +201,26 @@ def trashes(node):
     return False
 
 
+def cloud_path(tool, tool_input):
+    """The first cloud path a write puts on the board, unless its text marks it as lost (C13)."""
+    if not WRITE_RE.search(tool) or READ_RE.search(tool):
+        return None
+    if isinstance(tool_input, str):
+        texts = [tool_input]
+    else:
+        texts = list(strings(tool_input))
+    for text in texts:
+        for m in CLOUD_RE.finditer(text):
+            if LOST_NOTE not in text[m.end():m.end() + LOST_NOTE_REACH].split("\n", 1)[0]:
+                return m.group(0)
+    return None
+
+
 def verdict(tool, tool_input):
-    """("ok" | "warn" | "ask", reason) for this call."""
+    """("ok" | "warn" | "ask" | "deny", reason) for this call."""
+    path = cloud_path(tool, tool_input)
+    if path:
+        return "deny", REASONS["cloud_path"].format(path=path)
     if NOTION_AI_RE.search(tool):
         return "ask", REASONS["notion_ai"]
     if SCHEMA_RE.search(tool):
@@ -261,7 +298,15 @@ def main():
 
     record(payload, tool, level, reason)
     warning = f"⚠️ business-os — לוח: {reason} {CONTRACT}"
-    if level == "ask":
+    if level == "deny":
+        out = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": f"business-os — {reason}",
+            },
+        }
+    elif level == "ask":
         out = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",

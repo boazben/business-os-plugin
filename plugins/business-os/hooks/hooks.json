@@ -12,11 +12,45 @@
         ]
       },
       {
+        "matcher": "^mcp__.*device_commit_files$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/ledger.py --commit 2>/dev/null; exit 0",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "matcher": "^mcp__.*[Nn]otion",
         "hooks": [
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/board-gate.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^mcp__.*device_commit_files$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/ledger.py --returned 2>/dev/null; exit 0",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "^mcp__.*device_commit_files$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/hooks/ledger.py --failed 2>/dev/null; exit 0",
             "timeout": 15
           }
         ]

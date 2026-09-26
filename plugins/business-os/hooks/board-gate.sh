@@ -1,8 +1,9 @@
 #!/bin/sh
 # business-os — PreToolUse hook for Notion tools. It does not block board work:
 # it lets the call through, warns the founder and keeps a record, so Claude can
-# do more of the board and he does less of it by hand. See board-gate.py for
-# the exact verdicts (ok / warn / ask).
+# do more of the board and he does less of it by hand. The one refusal is a
+# write that points the board at a Cowork cloud path. See board-gate.py for the
+# exact verdicts (ok / warn / ask / deny).
 #
 # Fails open, loudly: if python3 is missing or the check itself fails, a Notion
 # write still goes through with a warning that it was not checked — except

@@ -3,8 +3,9 @@
 Run: python3 plugins/business-os/hooks/tests/test_board_gate.py
 Every case sends a real PreToolUse event to board-gate.sh (the hook entry) and reads the verdict off
 its stdout: "ok" (silent, ordinary board work), "warn" (goes through, the founder is told and the
-call is recorded) or "ask" (he confirms in one click). The gate does not block; a "blocked" verdict
-would be a bug. Two tool families: the Notion connector (flat values) and a local Notion MCP server
+call is recorded), "ask" (he confirms in one click) or "deny" — only for a write that points the
+board at a Cowork cloud path, which is gone when the session ends. Any other block ("blocked", or a
+deny of anything else) would be a bug. Two tool families: the Notion connector (flat values) and a local Notion MCP server
 exposing the REST API (nested values). When the gate misreads a call, add the case here before fixing it.
 """
 import json
@@ -18,10 +19,12 @@ HOOK = Path(__file__).resolve().parent.parent / "board-gate.sh"
 CONNECTOR = "mcp__claude_ai_Notion__notion-"
 REST = "mcp__notion__API-"
 failures = []
+REASON = [""]
 
 
 def run(tool, tool_input, raw=None):
-    """The gate's verdict: "ok", "warn", "ask", or "blocked" if it ever blocks."""
+    """The gate's verdict: "ok", "warn", "ask", "deny" (with its reason kept in REASON), or "blocked"
+    if it ever blocks by exit code."""
     data = raw if raw is not None else json.dumps({"tool_name": tool, "tool_input": tool_input}, ensure_ascii=False)
     env = dict(os.environ, HOME=HOME)
     p = subprocess.run(["sh", str(HOOK)], input=data.encode(), capture_output=True, env=env)
@@ -35,6 +38,9 @@ def run(tool, tool_input, raw=None):
     except ValueError:
         return f"unparseable output: {out[:80]}"
     hook = decision.get("hookSpecificOutput") or {}
+    if hook.get("permissionDecision") == "deny":
+        REASON[:] = [hook.get("permissionDecisionReason") or ""]
+        return "deny"
     if hook.get("permissionDecision") == "ask":
         return "ask"
     return "warn" if decision.get("systemMessage") else "ok"
@@ -118,6 +124,23 @@ def main():
     case("trash a page", "ask", run(REST + "patch-page", {"page_id": "p", "in_trash": True}))
     case("archive a page", "ask", run(REST + "patch-page", {"page_id": "p", "archived": True}))
     case("trash a page the connector way", "ask", run(CONNECTOR + "update-page", {"page_id": "p", "in_trash": True}))
+
+    print("== a cloud path on the board: refused, with the fix")
+    cloud = "/mnt/user-data/outputs/מודעה.md"
+    case("result points at the outputs folder", "deny", run(CONNECTOR + "update-page", {"page_id": "p", "properties": {"תוצאה": f"המודעה מוכנה: {cloud}"}}))
+    case("...the reason names the path and the fix", (True, True), (cloud in REASON[0], "device_commit_files" in REASON[0]))
+    case("page content with /home/claude", "deny", run(CONNECTOR + "update-page", {"page_id": "p", "command": "insert_content_after", "new_str": "## ריצה\nנשמר ב-/home/claude/ads/v2.md"}))
+    case("new row whose body names an upload", "deny", run(CONNECTOR + "create-pages", {"parent": board, "pages": [{"properties": {"שם": "x"}, "content": "קלט: /mnt/user-data/uploads/שחות/brief.md"}]}))
+    case("REST blocks with a cloud path", "deny", run(REST + "patch-block-children", {"block_id": "p", "children": [{"paragraph": {"rich_text": [{"text": {"content": "/home/claude/x.jpg"}}]}}]}))
+    case("a comment with a cloud path", "deny", run(CONNECTOR + "create-comment", {"page_id": "p", "text": "ראה /mnt/user-data/outputs/a.md"}))
+    case("a path in the project folder", "ok", run(CONNECTOR + "update-page", {"page_id": "p", "properties": {"תוצאה": "נשמר ב-שיווק/מודעות/מודעה.md · /mnt/c/Users/b/ventures/שחות/x.md"}}))
+    case("a lost cloud path marked as such (C13)", "ok", run(CONNECTOR + "update-page", {"page_id": "p", "properties": {"תוצאה": "נבדק מול /home/claude/old.md (נתיב ענן — הקובץ לא נשמר, 26.9)"}}))
+    case("the note frees only the path it follows", "deny", run(CONNECTOR + "update-page", {"page_id": "p", "properties": {"תוצאה": "ישן: /home/claude/old.md (נתיב ענן — הקובץ לא נשמר, 26.9) · חדש: /mnt/user-data/outputs/new.md"}}))
+    case("a lost path with spaces, marked right after it", "ok", run(CONNECTOR + "update-page", {"page_id": "p", "properties": {"תוצאה": "נבדק מול /mnt/user-data/uploads/wellness דיגטילי/משפטי/12 - נוסחים לטופס ההזמנה (פרטיות, הסכמה).md (נתיב ענן — הקובץ לא נשמר, 26.9)"}}))
+    case("the roots alone, describing the rule, are not a link", "ok", run(CONNECTOR + "update-page", {"page_id": "p", "new_str": "השומר חוסם כתיבה ללוח של /home/claude או /mnt/user-data."}))
+    case("searching for a cloud path is not a write", "ok", run(CONNECTOR + "search", {"query": "/mnt/user-data/outputs"}))
+    case("REST search (a POST) is not a write", "ok", run(REST + "post-search", {"query": "/home/claude"}))
+    case("REST query (a POST) is not a write", "ok", run(REST + "post-database-query", {"filter": {"rich_text": {"contains": "/home/claude"}}}))
 
     print("== the check itself fails: through with a warning, one click for the rest")
     case("unparseable write event", "warn", run("", None, raw='{"tool_name": "mcp__notion__API-patch-page", "tool_input": {"properties": "מאושר"'))

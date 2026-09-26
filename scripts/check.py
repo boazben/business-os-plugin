@@ -8,6 +8,10 @@
    ~/.business-os/approved-anchor-removals.txt.
 2. Read instructions rewritten in BOS-49 do not go back to English venture paths
    (the venture folders are Hebrew; an English path reads nothing, or a whole folder).
+3. The shared prompt sections (plugins/business-os/shared/) are identical in every agent that
+   carries them: the review rules in every department head, the verdict line and blocking label
+   in every reviewer — and the reviewers are exactly the set skills/ledger/report.py checks
+   (BOS-49 C9/C10). A section edited in one agent only would quietly split the rules.
 
 Usage: check.py [--staged] [--persona FILE]
   --staged   check what is being committed (the git index), not the working tree
@@ -115,6 +119,63 @@ def check_read_paths():
     return fails
 
 
+HEADS = [
+    "plugins/marketing-os/agents/marketing-lead.md",
+    "plugins/legal-os/agents/legal-lead.md",
+    "plugins/design-os/agents/design-lead.md",
+    "plugins/rnd-os/agents/rnd-lead.md",
+    "plugins/business-os/agents/platform-lead.md",
+]
+HEAD_RULES = "plugins/business-os/shared/head-review-rules.md"
+REVIEWER_CONTRACT = "plugins/business-os/shared/reviewer-contract.md"
+LEDGER_REPORT = "plugins/business-os/skills/ledger/report.py"
+
+
+def section(text, heading):
+    """The markdown section that starts at the line `heading`, up to the next '## ' heading."""
+    lines = text.splitlines()
+    if heading not in lines:
+        return None
+    i = lines.index(heading)
+    j = next((k for k in range(i + 1, len(lines)) if lines[k].startswith("## ")), len(lines))
+    return "\n".join(lines[i:j]).strip()
+
+
+def reviewer_names(report_text):
+    m = re.search(r"^REVIEWERS = \{(.*?)\}", report_text or "", re.S | re.M)
+    return set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
+
+
+def check_shared(read=None):
+    """read(rel) -> text or None; the working tree by default."""
+    if read is None:
+        def read(rel):
+            path = ROOT / rel
+            return path.read_text(encoding="utf-8") if path.exists() else None
+    agents = {str(p.relative_to(ROOT)): read(str(p.relative_to(ROOT)))
+              for p in sorted(ROOT.glob("plugins/*/agents/*.md"))}
+    reviewers = reviewer_names(read(LEDGER_REPORT))
+    want_reviewers = [rel for rel in agents if pathlib.Path(rel).stem in reviewers]
+    fails = []
+    if not reviewers:
+        fails.append(f"{LEDGER_REPORT}: no REVIEWERS set found")
+    for source, required in ((HEAD_RULES, HEADS), (REVIEWER_CONTRACT, want_reviewers)):
+        src = (read(source) or "").strip()
+        if not src:
+            fails.append(f"{source}: missing")
+            continue
+        heading = src.splitlines()[0]
+        have = [rel for rel, text in agents.items() if text and heading in text.splitlines()]
+        fails += [f"{rel}: shared section missing ({source})" for rel in required if rel not in have]
+        fails += [f"{rel}: shared section differs from {source} — change the source and every copy together"
+                  for rel in have if section(agents[rel], heading) != src]
+        if source == REVIEWER_CONTRACT:
+            extra = sorted(pathlib.Path(rel).stem for rel in have if rel not in want_reviewers)
+            if extra:
+                fails.append(f"{LEDGER_REPORT}: REVIEWERS lacks {', '.join(extra)}, which carry the reviewer contract")
+    return fails
+
+
 def main(argv):
     staged = "--staged" in argv
     argv = [a for a in argv if a != "--staged"]
@@ -135,7 +196,8 @@ def main(argv):
         anchors_text = None
     base = (git_show("HEAD:scripts/persona-anchors.txt") or "") + "\n" + trusted_text()
     approved = APPROVED.read_text(encoding="utf-8", errors="replace") if APPROVED.exists() else ""
-    fails = check_persona(persona, anchors_text, base, approved) + check_read_paths()
+    read = (lambda rel: git_show(f":{rel}")) if staged else None
+    fails = check_persona(persona, anchors_text, base, approved) + check_read_paths() + check_shared(read)
     for f in fails:
         print(f"check: {f}", file=sys.stderr)
     return 1 if fails else 0

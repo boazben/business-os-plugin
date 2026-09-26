@@ -46,15 +46,41 @@ Consent is a file in this plugin, not a per-session setting. The plugin is the o
   - If fork fails, the row is written inline without waiting.
 - Verified in Cowork on 2026-09-25 (BOS-49 check 5): SubagentStop and Stop both fire there, with transcripts and no zombie processes.
 
+## Which version each agent was given, and what came back (BOS-49 C15)
+
+- **Call and finish rows carry the brief's hash.** A call row's description gets ` · brief@<hash>`, the first 8 hex digits of the prompt's sha256. The subagent's finish row gets the same, from the first message of its own transcript, which is that prompt: verified 27.9 on three local subagents, where the text was identical. So a finish is tied to its own call, and not to another call of the same agent that finished at a similar time. A finish row without the hash (older rows, or a transcript that can't be read) is tied by time only, and the report says so.
+- **Call rows name the files the brief gave.** For every file the brief names that exists, the row's description ends with ` · saw <name>@<hash>`. The hash is the first 8 hex digits of the file's sha256. The rules:
+  - An absolute or `~` path may contain spaces, so it is not cut at a space. The folders are walked while they exist, and the file is the longest name in the last folder that the rest of the text starts with. A path may follow `ב-`, `**`, `״` or a bracket. Checked on every file in the founder's venture folder, in eight ways of writing it.
+  - A relative path counts only inside backticks, resolved against the session's folder.
+  - Folders, missing files and URLs are skipped. There are at most 20 files per brief. A file over 50 MB, or past 200 MB read in one call, is `@big` and is not read, because the hook runs before the agent starts.
+  - This is what lets `skills/ledger/report.py review` tell whether a reviewer saw the exact version the founder is about to get. The comparison is by content, so a Cowork copy under another path still matches.
+- **Return rows (Cowork's `device_commit_files`).** Each row has caller, target, `files: N`, and for each file the name it gets in the project folder with the hash of the content sent.
+  - `--commit` (PreToolUse) writes `returning` before the call.
+  - After the call, `--returned` (PostToolUse, which fires only on success) writes `returned`, or `return failed` when the response has `isError: true`. `--failed` (PostToolUseFailure) writes `return failed`.
+  - The report counts only confirmed returns. It counts the attempts, and says they are unverified and may have failed, only when the session has no row after any return at all. That means the after-call hooks did not run there. Whether they fire in Cowork has not been seen yet.
+- **A ledger file per Cowork session.** When `/mnt/user-data/outputs` exists (`BUSINESS_OS_OUTPUTS` overrides it in tests), every row is also written to `outputs/business-os-ledger/<date>-<session>.md`. The CEO returns that file to `_מערכת/ledger/` at the end of a board run, because the cloud copy dies with the session. The session's last turn misses that copy.
+- **Reading it:** the `business-os:ledger` skill (`skills/ledger/report.py`):
+  - `review FILE` — did every reviewer that was given FILE see this version, and finish?
+  - `start` / `run` — since the start of the run: calls, unfinished calls, tokens, versions, and "not returned: N".
+  - The lines for the board come first. Cloud paths come below a "לא ללוח" line, because the board gate refuses them.
+  - A call without a finish row is "not verified by the hook". It never counts as a review that ran.
+
 ## What `board-gate.sh` does
 
-It runs before every Notion MCP tool call (any tool name starting with `mcp__` that contains `notion`). **It does not block.** The founder asked for a gate that warns and keeps a record rather than standing in the way, so that Claude does more of the board work and he does less of it by hand. Three verdicts, all letting the call proceed:
+It runs before every Notion MCP tool call (any tool name starting with `mcp__` that contains `notion`). **It does not block board work.** The founder asked for a gate that warns and keeps a record rather than standing in the way, so that Claude does more of the board work and he does less of it by hand. Three verdicts let the call proceed:
 
 | verdict | what happens | which calls |
 |---|---|---|
 | `ok` | nothing, silently | ordinary board work: statuses other than the founder's, results, page content, reads, comments, rows created under a parent |
 | `warn` | a `systemMessage` to the founder and a row in `~/.business-os/board-log.md` | the two exits from `ממתין לאישור` (`מאושר`, `לסבב נוסף`); his reply column `תגובת מייסד`; creating a database or changing a data source's columns and options; creating a page without a `parent`; moving or duplicating a page |
 | `ask` | a permission prompt — one click — plus the same row | trashing or archiving a page (`in_trash`/`archived` true), and handing work to Notion AI (`spawn-session`, `send-message-to-session`), which could do anything on the board on Claude's behalf |
+
+**One refusal (`deny`, BOS-49 C17): a write that puts a Cowork cloud path on the board.**
+- **What:** any Notion write, meaning a page, its content or a comment, whose text contains a path under `/home/claude/` or `/mnt/user-data/`. The roots alone (a sentence that describes this rule) are not a path. Searches and queries are not writes.
+- **Why:** that file is deleted when the session ends, so the board would point at nothing.
+- **What Claude is told:** return the file to the project folder with `device_commit_files`, and write that path instead.
+- **Already lost:** a cloud path whose file is already gone is written with the C13 note `(נתיב ענן — הקובץ לא נשמר, <תאריך>)` right after it, within 80 characters. The note lets that one path through, not every path in the text.
+- **Record:** the refusal gets a row in `board-log.md`. There is no message to the founder, because nothing reached the board.
 
 - **What it detects.** A status-like property (name contains `סטטוס` or `status`) set to a value containing `אושר`, `מאשר`, `approved` or `סבב נוסף`; any other property set to exactly one of the approved words; a status set by option `id` only (the option could be `מאושר`); a property whose name contains `תגובת מייסד`, `הערת מייסד` or `founder note`. Values and names are compared letters-only: niqqud, emoji, punctuation, spaces and invisible characters are dropped first. `סבב נוסף` counts only inside a status, so a result line like `סבב 2: קוצר` stays silent, and so does the `## סבב <n>` block in which a run records what the founder said.
 - **Two tool families.** The Notion connector (`notion-update-page`, flat values) and the Notion REST API exposed by a local Notion MCP server (`API-patch-page`, `API-post-page`, nested values such as `{"status": {"name": "..."}}`). The local server must be registered under a name containing `notion`, or the `hooks.json` matcher does not see it.

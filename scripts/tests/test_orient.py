@@ -56,6 +56,14 @@ with tempfile.TemporaryDirectory() as d:
     (pathlib.Path(d) / "מוצרים" / "00 - אינדקס.md").write_text("# אינדקס\n| מוצר | סטטוס |\n|---|---|\n| iDiskk | מועמד |\n", encoding="utf-8")
     om.board.fetch = lambda folder: (rows, P, {"58": "פסיקה 01, תנאי 01.2 — מכוסה ע\"י BOS-46"}, PROJECT)
     out = om.report("wellness", d)
+    system = pathlib.Path(d) / "_מערכת"
+    (system / "incoming" / "2026-09-26T10-00Z" / "שיווק").mkdir(parents=True)
+    (system / "incoming" / "2026-09-26T10-00Z" / "שיווק" / "מודעה.md").write_text("x", encoding="utf-8")
+    (system / "תקלות" / "טופל").mkdir(parents=True)
+    (system / "תקלות" / "2026-09-26T09-00Z.md").write_text("notion failed", encoding="utf-8")
+    (system / "תקלות" / "טופל" / "old.md").write_text("handled", encoding="utf-8")
+    out_waiting = om.report("wellness", d)
+    staged_lines, staged_notes = om.system_waiting("/mnt/user-data/uploads/no-such-venture")
 
 check("milestone blockers split: can do now / waiting", "## מה חוסם את \"מכירה ראשונה\" (BOS-58) — 3: 1 אפשר לעשות עכשיו, 2 מחכות" in out
       and "### אפשר לעשות עכשיו — 1" in out and "- BOS-52 תנאי פסיקה 21 — לביצוע — Cowork — אין יעד\n### מחכות — 2" in out)
@@ -76,6 +84,14 @@ check("the bottom line is computed, before the report", "**שורה תחתונה
       and "היעד הקרוב בלוח: BOS-50 מעקב ספק (8.10.2026, חסום)." in out)
 check("the contents list every section heading", "**בדוח:** המוצרים · מה חוסם את" in out
       and "משימות פתוחות שלא מחוברות לאף אבן דרך" in out.split("**בדוח:**")[1].split("\n")[0])
+check("nothing waiting in _מערכת: says so, and the bottom line is quiet",
+      "## מחכה בתיקיית המערכת" in out and "מחכים ב-_מערכת" not in out)
+check("a file set aside for merging and an open failure are listed; a handled one is not",
+      "- `_מערכת/incoming/2026-09-26T10-00Z/שיווק/מודעה.md` — מחכה למיזוג" in out_waiting
+      and "- `_מערכת/תקלות/2026-09-26T09-00Z.md` — תקלה שלא טופלה" in out_waiting and "old.md" not in out_waiting)
+check("in Cowork a folder that was not brought is 'not checked', not 'nothing waiting'",
+      staged_lines == [] and "- `_מערכת/incoming/` — לא נבדק: לא הובא לענן, או ריק" in staged_notes)
+check("...and counted in the bottom line", "; 2 קבצים מחכים ב-_מערכת (מיזוג או תקלה)." in out_waiting)
 check("a done blocker is not counted, and is listed apart", "### כבר לא חוסמות (הושלמו או בוטלו) — 1\n- BOS-54 עוסק — הושלם" in out)
 check("a task waiting on an idea still waits", "  - מחכה: תלויה ב-BOS-70 (רעיון)" in out)
 check("tasks read by id are not listed as open tasks", "BOS-70 רעיון —" not in out and "\n- BOS-54" not in out.split("## כל המשימות")[1])
