@@ -184,9 +184,28 @@ def read_marker(session):
     return data
 
 
-def main_units(rs):
+def main_transcript(session_id):
+    """This conversation's own transcript, found by its session id (full, or the 8-character prefix)."""
+    if not session_id:
+        return None
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or home() / ".claude")
+    found = [p for p in glob.glob(str(config / "projects" / "*" / f"{glob.escape(session_id)}*.jsonl"))
+             if os.path.isfile(p)]
+    return max(found, key=os.path.getmtime) if found else None
+
+
+def main_units(rs, session_id=None):
+    """(units, "now" | "previous turn") of the main conversation. From its transcript when it can
+    be found: the ledger's "main total" row is written only when a turn ends, and a board run is
+    often one long turn (Cowork, 27.9: no main cost at all). Else from that row."""
+    path = main_transcript(session_id)
+    if path:
+        try:
+            return ledger.transcript_stats(path)["units"], "now"
+        except Exception:  # noqa: BLE001 - fall back to the row
+            pass
     found = [units(r.description) for r in rs if r.target == ledger.MAIN_TOTAL]
-    return found[-1] if found else None
+    return (found[-1], "previous turn") if found and found[-1] is not None else (None, None)
 
 
 def new_files(since):
@@ -229,7 +248,7 @@ def not_returned(since, rs):
 
 # --- commands -------------------------------------------------------------------------------
 
-def cmd_start(session, rs):
+def cmd_start(session, rs, session_id=None):
     m = marker(session)
     m.parent.mkdir(parents=True, exist_ok=True)
     for old in m.parent.glob("run-start-*"):
@@ -239,11 +258,12 @@ def cmd_start(session, rs):
         except OSError:
             pass
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    m.write_text(json.dumps({"time": now, "main_units": main_units(rs or [])}), encoding="utf-8")
+    units_then, source = main_units(rs or [], session_id)
+    m.write_text(json.dumps({"time": now, "main_units": units_then, "main_source": source}), encoding="utf-8")
     print(f"תחילת ריצה סומנה (שיחה {session}, {now} UTC)")
 
 
-def cmd_run(session, rs):
+def cmd_run(session, rs, session_id=None):
     start = read_marker(session)
     if start:
         rs = [r for r in rs if r.time >= start["time"]]
@@ -268,11 +288,17 @@ def cmd_run(session, rs):
     tokens = f"טוקנים (יחידות משוקללות): סוכנים {ledger.short(sum(known))}"
     if len(known) < len(agent_units):
         tokens += f" (בלי {len(agent_units) - len(known)} סיומים שלא נמדדו)"
-    now_main = main_units(rs)
+    now_main, when = main_units(rs, session_id)
     if now_main is not None:
-        base = (start or {}).get("main_units") or 0
-        main = max(now_main - base, 0)
-        tokens += f" + שיחה ראשית עד התור הקודם {ledger.short(main)} = {ledger.short(main + sum(known))}"
+        label = "שיחה ראשית עד עכשיו" if when == "now" else "שיחה ראשית עד התור הקודם"
+        # Less what it was at start — only when both numbers come from the same place.
+        if start and start.get("main_source") == when and start.get("main_units") is not None:
+            main = max(now_main - start["main_units"], 0)
+        else:
+            main = now_main
+            if start:
+                label += " (כל השיחה)"
+        tokens += f" + {label} {ledger.short(main)} = {ledger.short(main + sum(known))}"
     else:
         tokens += " · שיחה ראשית: עוד לא נרשמה"
     print(tokens)
@@ -340,6 +366,8 @@ def cmd_review(rs, files):
             call, fin, how, _ = on_final[-1]
             if fin.policy == "-":
                 warnings.append(f"{reviewer} סיים בלי שורת פסיקה")
+            elif fin.policy.endswith(ledger.EARLIER):
+                warnings.append(f"{reviewer}: שורת הפסיקה מהודעה קודמת שלו, לא מהתשובה הסופית — לא ודאי שזו ההכרעה")
             elif how == "time":
                 warnings.append(f"{reviewer}: הסיום שויך לפי זמן, לא לפי התדריך — לא ודאי שהוא של הבדיקה הזו")
         for w in dict.fromkeys(warnings):
@@ -357,20 +385,21 @@ def main():
     p.add_argument("--session")
     a = p.parse_args()
     everything = all_rows()
-    session = (a.session or os.environ.get("CLAUDE_CODE_SESSION_ID") or "")[:8]
+    session_id = a.session or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
+    session = session_id[:8]
     if not session and everything:
-        session = everything[-1].session
+        session = session_id = everything[-1].session
         print(f"(שיחה {session} לפי השורה האחרונה ביומן — CLAUDE_CODE_SESSION_ID לא מוגדר)")
     if not session:
         sys.exit("אין מזהה שיחה: CLAUDE_CODE_SESSION_ID ריק והיומן ריק. להריץ עם --session <8 התווים מעמודת session ביומן>.")
     rs = [r for r in everything or [] if r.session == session]
     if a.command == "start":
-        return cmd_start(session, rs)
+        return cmd_start(session, rs, session_id)
     if everything is None:
         print("אין יומן (~/.business-os/ledger.md) — אין דרך לאמת מה רץ")
         return
     if a.command == "run":
-        return cmd_run(session, rs)
+        return cmd_run(session, rs, session_id)
     if not a.files:
         sys.exit("review צריך לפחות קובץ אחד")
     return cmd_review(rs, a.files)

@@ -142,6 +142,12 @@ def main(tmp):
     finished(LV, PASS)  # a finish row with no brief hash (older hook, unreadable transcript)
     _, text = report("review", str(old))
     check("a finish tied only by time is marked uncertain", "שויך לפי זמן" in text and "לא ודאי" in text and "✓" not in text, text)
+    draft = v / "draft-verdict.md"
+    draft.write_text("d", encoding="utf-8")
+    b = called("legal-os:legal-lead", LV, f"{draft}")
+    finished(LV, f"{PASS} (מהודעה קודמת)", b)
+    _, text = report("review", str(draft))
+    check("a verdict taken from an earlier message: uncertain, no ✓", "מהודעה קודמת שלו" in text and "✓" not in text, text)
     locked = v / "locked.md"
     locked.write_text("l", encoding="utf-8")
     b = called("legal-os:legal-lead", LV, f"{locked}")
@@ -217,12 +223,37 @@ def main(tmp):
     check("the board lines pass the board gate", gate.verdict("mcp__x__notion-update-page", {"page_id": "p", "new_str": real})[0] != "deny", real)
     check("...the off-board block would not", gate.verdict("mcp__x__notion-update-page",
           {"page_id": "p", "new_str": off.replace(str(tmp), "/home/claude")})[0] == "deny")
+    # Start counted the main conversation from its row, the transcript appears later: the two can't
+    # be subtracted, so the whole conversation is shown, and said so.
+    proj = home / ".claude" / "projects" / "-home-claude"
+    proj.mkdir(parents=True)
+
+    def response(mid, out_tokens):
+        usage = {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": out_tokens}
+        return json.dumps({"type": "assistant", "timestamp": "2026-09-27T04:26:00Z", "message": {
+            "id": mid, "model": "claude-opus-5-5", "content": [{"type": "text", "text": "x" * (out_tokens * 3)}], "usage": usage}}) + "\n"
+    (proj / "sess1234-full-id.jsonl").write_text(response("m1", 100_000), encoding="utf-8")
+    _, text = report("run")
+    check("sources differ between start and now: the whole conversation, said so",
+          "שיחה ראשית עד עכשיו (כל השיחה) 500K" in text, text)
+    (proj / "sess1234-full-id.jsonl").unlink()
     (cloud / "sub" / "copy-of-sent.md").write_text("sent", encoding="utf-8")
     _, text = report("run")
     check("a cloud file with the same content as a confirmed one counts as returned", "copy-of-sent" not in text, text)
     _, text = report("run", BUSINESS_OS_OUTPUTS=str(tmp / "nowhere"))
     check("not Cowork (no outputs folder): no 'not returned' line, no off-board block",
           "לא הוחזרו" not in text and "לא ללוח" not in text, text)
+
+    print("== run: a one-turn board run — the main conversation from its transcript")
+    sm = dict(env, CLAUDE_CODE_SESSION_ID="sessmain-0001")
+    log_main = proj / "sessmain-0001.jsonl"
+    log_main.write_text(response("a1", 20_000), encoding="utf-8")  # 100K units before the run
+    subprocess.run([sys.executable, str(REPORT), "start"], env=sm, check=True, capture_output=True)
+    with open(log_main, "a", encoding="utf-8") as f:
+        f.write(response("a2", 60_000))  # the run itself: 300K units, no "main total" row yet
+    text = subprocess.run([sys.executable, str(REPORT), "run"], env=sm, capture_output=True, text=True).stdout
+    check("the run's main-conversation cost is there before the turn ends, less what came before start",
+          "סוכנים 0 + שיחה ראשית עד עכשיו 300K = 300K" in text, text)
 
     print("== run: returns the PostToolUse hook never confirmed")
     s2 = dict(env, CLAUDE_CODE_SESSION_ID="sess5678")

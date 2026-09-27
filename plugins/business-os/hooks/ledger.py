@@ -11,8 +11,8 @@ here costs a missing row, not a broken session.
   names that exists, its name and a short sha256 ("saw name@1a2b3c4d") — which
   version of a file each agent was given.
 - A finish (`--finish`, on SubagentStop and Stop): who finished, and from its
-  transcript only numbers — model, tool calls, minutes, tokens — plus the line
-  of its last reply that starts with "פסיקה או ממצא:" or "פסיקה:" (cut to 120
+  transcript only numbers — model, tool calls, minutes, tokens — plus the newest
+  line of its own text that starts with "פסיקה או ממצא:" or "פסיקה:" (cut to 120
   characters), and the hash of the brief it was started with — the first
   message of its transcript, which is the call's prompt — so a finish is tied to
   its own call, not to another call of the same agent. A subagent gets a row each time it finishes; the main
@@ -99,7 +99,16 @@ except ValueError:
 # at 8 characters a token), so its output is estimated at CHARS_PER_TOKEN — about right across
 # Hebrew, English and JSON — and the row shows "out ~N".
 MIN_CHARS_PER_TOKEN, CHARS_PER_TOKEN = 8, 3
-VERDICT_RE = re.compile(r"^[\s>*_#-]*(פסיקה או ממצא|פסיקה)[*_]*\s*:")
+# The verdict line however it is dressed: a list mark, a quote, a table cell, backticks (as the
+# shared contract shows it), a number or "שורה 2:" before it, invisible direction marks; then a
+# parenthesis, ":", a dash or a table bar. It must also carry a ruling word — the contract makes
+# the (עובר / עובר בתנאי / עוצר) mapping part of the line — so a cited ruling ("פסיקה: ע"א …") or
+# a table header is never taken for the reviewer's verdict.
+VERDICT_RE = re.compile(
+    r"^[\s>*_#`|\u200e\u200f\"'״-]*(?:\d+[.)]\s*)?(?:[*_]*שורה\s*\d+\s*:?[*_]*\s*)?[`*_]*"
+    r"(פסיקה או ממצא|פסיקה)[`*_]*(?:\s*\([^)]*\))?\s*[:—–|-]")
+RULING_RE = re.compile(r"עובר|עוצר|נכשל")
+EARLIER = "(מהודעה קודמת)"
 
 
 def split(name):
@@ -291,7 +300,7 @@ def transcript_stats(path):
     with the highest output count is kept, and the content blocks are counted once each."""
     usage, models, blocks, tools = {}, {}, {}, set()
     first = last = None
-    last_text = ""
+    texts = collections.deque(maxlen=50)  # the agent's own recent text blocks, newest last: (message, text)
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             if '"assistant"' not in line:
@@ -323,7 +332,8 @@ def transcript_stats(path):
                 if c.get("type") == "tool_use" and c.get("id"):
                     tools.add(c["id"])
                 elif c.get("type") == "text" and (c.get("text") or "").strip():
-                    last_text = c["text"]
+                    if (mid, c["text"]) not in texts:
+                        texts.append((mid, c["text"]))
             u = m.get("usage")
             if isinstance(u, dict):
                 kept = usage.get(mid)
@@ -358,15 +368,31 @@ def transcript_stats(path):
         "tokens": t,
         "out_estimated": estimated,
         "units": sum(t[k] * w for k, w in WEIGHTS.items()),
-        "last_text": last_text,
+        "texts": list(texts),
     }
 
 
 def verdict_line(text):
     for line in (text or "").splitlines():
-        if VERDICT_RE.match(line):
-            return line.strip()
+        if VERDICT_RE.match(line) and RULING_RE.search(line):
+            return line.strip().strip("`").strip()
     return ""
+
+
+def find_verdict(texts, reply):
+    """(verdict line, where from). The reviewer's final message first, then the event's reply, and
+    only then an earlier message of its own — tagged, since it may be a draft it later reversed."""
+    final_mid = texts[-1][0] if texts else None
+    final = [t for m, t in texts if m == final_mid]
+    for t in reversed(final):
+        if verdict_line(t):
+            return verdict_line(t), "final"
+    if verdict_line(reply):
+        return verdict_line(reply), "reply"
+    for m, t in reversed(texts):
+        if m != final_mid and verdict_line(t):
+            return f"{verdict_line(t)} {EARLIER}", "earlier"
+    return "", "none"
 
 
 def finished_transcript(event):
@@ -444,9 +470,11 @@ def finish_row(event, wait=True):
         stats = transcript_stats(path)
     except Exception as e:  # a row that says so, not a missing row that reads as "the hook never ran"
         return who, target, verdict_line(reply) or "-", f"no usage: error ({type(e).__name__})"
-    verdict = (verdict_line(stats["last_text"]) or verdict_line(reply)) if subagent else ""
+    verdict = ""
     numbers = describe(stats, minutes=subagent)
     if subagent:
+        verdict, source = find_verdict(stats["texts"], reply)
+        numbers += f" · verdict {source}"  # where the line came from — how a missing one is traced
         try:
             prompt = first_prompt(path)
         except OSError:

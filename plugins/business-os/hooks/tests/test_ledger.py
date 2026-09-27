@@ -117,7 +117,8 @@ def main():
     want_numbers = ("opus-5-5 · 2 requests · 3 tools · 2m · in 15 · cache write 1.0K · cache read 20K"
                     " · out 250 · 4.5K units")
     want_main = want_numbers.replace(" · 2m", "")  # the main span includes idle time: no minutes
-    want_numbers += brief("בריף — טקסט פרטי")  # the first message of the agent's transcript is its brief
+    # Then where the verdict line came from, and the brief's hash (the first message of the transcript).
+    want_numbers += " · verdict final" + brief("בריף — טקסט פרטי")
     sub = command("SubagentStop")
     stop = command("Stop")
 
@@ -148,6 +149,50 @@ def main():
     finish(sub, dict(event, agent_id="a2", agent_transcript_path=str(agent_log2),
                      last_assistant_message="פסיקה: עוצר — חסר אישור"))
     case("...last_assistant_message when the transcript has none", "פסיקה: עוצר — חסר אישור", rows()[-1][4])
+
+    # As a reviewer may end (Cowork, 27.9): the verdict in backticks inside the report, then a tool
+    # call, then one more short sentence — the verdict is not in the last text block.
+    split_log = base / "s1" / "subagents" / "agent-a7.jsonl"
+    split_log.write_text("\n".join([
+        json.dumps({"type": "user", "message": {"content": "בדיקת מותג"}}, ensure_ascii=False),
+        line("s1", "2026-09-25T10:00:00.000Z", [{"type": "text", "text": "נבדק: פוסטים.md\n`פסיקה או ממצא: נקיים לפרסום אורגני (עובר בתנאי)`\nפירוט"}],
+             {"input_tokens": 5, "output_tokens": 40}),
+        line("s2", "2026-09-25T10:00:05.000Z", [{"type": "tool_use", "id": "t7", "name": "Write", "input": {}}],
+             {"input_tokens": 5, "output_tokens": 10}),
+        line("s3", "2026-09-25T10:00:09.000Z", [{"type": "text", "text": "סיימתי. הדוח למעלה."}],
+             {"input_tokens": 5, "output_tokens": 8}),
+    ]) + "\n", encoding="utf-8")
+    finish(sub, dict(event, agent_id="a7", agent_transcript_path=str(split_log), agent_type="marketing-os:brand-guardian"))
+    case("a verdict only in an earlier message is found, and tagged uncertain",
+         ["פסיקה או ממצא: נקיים לפרסום אורגני (עובר בתנאי) (מהודעה קודמת)", True],
+         [rows()[-1][4], " · verdict earlier · " in rows()[-1][5]])
+
+    def reviewer_log(name, *messages):
+        path = base / "s1" / "subagents" / f"agent-{name}.jsonl"
+        path.write_text("\n".join([json.dumps({"type": "user", "message": {"content": "בדיקה"}}, ensure_ascii=False)] + [
+            line(f"{name}-{i}", f"2026-09-25T10:00:0{i}.000Z", [{"type": "text", "text": t}], {"input_tokens": 1, "output_tokens": 30})
+            for i, t in enumerate(messages)]) + "\n", encoding="utf-8")
+        finish(sub, dict(event, agent_id=name, agent_transcript_path=str(path), agent_type="legal-os:legal-verifier"))
+        return rows()[-1]
+    r = reviewer_log("r1", "פסיקה או ממצא: נראה תקין (עובר)", "נבדק: מודעה.md\nפסיקה או ממצא - נמצאה הבטחת תוצאה (עוצר)")
+    case("a draft verdict reversed in the final message: the final one", ["פסיקה או ממצא - נמצאה הבטחת תוצאה (עוצר)", True],
+         [r[4], " · verdict final · " in r[5]])
+    r = reviewer_log("r2", "נבדק: מדיניות.md\nמקורות:\n- פסיקה: ע\"א 1234/20 פלוני נ' אלמוני\n- חוק הגנת הצרכן")
+    case("a cited court ruling is not a verdict", ["-", True], [r[4], " · verdict none · " in r[5]])
+    r = reviewer_log("r3", "| # | פסיקה | מקור | סטטוס |\n|---|---|---|---|\n| 1 | ע\"א 1 | נבו | מאומת |")
+    case("a table header is not a verdict", "-", r[4])
+    r = reviewer_log("r4", "נבדק: x\nפסיקה או ממצא (עוצר): טענה בלי מקור")
+    case("a ruling word in parentheses before the colon", "פסיקה או ממצא (עוצר): טענה בלי מקור", r[4])
+    for form, want in (("**שורה 2:** פסיקה או ממצא: עובר", "**שורה 2:** פסיקה או ממצא: עובר"),
+                       ("2. פסיקה או ממצא: עוצר", "2. פסיקה או ממצא: עוצר"),
+                       ("\u200fפסיקה או ממצא: עובר", "\u200fפסיקה או ממצא: עובר"),
+                       ("| פסיקה או ממצא | עובר |", "| פסיקה או ממצא | עובר |"),
+                       ("הפסיקה שלי: עובר", "")):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ledger_mod", PLUGIN / "hooks" / "ledger.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        case(f"verdict form {form[:24]!r}", want.strip(), mod.verdict_line("נבדק: x\n" + form))
 
     odd_log = base / "s1" / "subagents" / "agent-a4.jsonl"
     odd_log.write_text(line("m9", "2026-09-25T10:00:00.000Z", [], {"input_tokens": "many"}) + "\n", encoding="utf-8")
