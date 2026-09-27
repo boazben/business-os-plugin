@@ -15,7 +15,7 @@
 - **Tests:** `python3 scripts/tests/test_check.py`, `python3 plugins/business-os/hooks/tests/test_sync_persona.py`,
   `python3 plugins/business-os/hooks/tests/test_board_gate.py`, `python3 plugins/business-os/hooks/tests/test_ledger.py`,
   `python3 plugins/rnd-os/hooks/tests/test_security_gate.py`,
-  `python3 scripts/tests/test_orient.py`, `test_board.py`, `test_conditions.py`, `test_ledger_report.py` (same folder).
+  `python3 scripts/tests/test_orient.py`, `test_board.py`, `test_conditions.py`, `test_ledger_report.py`, `test_signals.py` (same folder).
 - **No status files.** "Where are we" is computed at read time from the Notion board, the legal rulings
   and the project page. Don't add a file that copies state from another owner. `business-os:orient` does it:
   code (`orient.py`, `board.py`, `conditions.py`) computes the full report, and the model answers with a few
@@ -25,3 +25,9 @@
   prefer a fresh session with a short handoff over resuming (the whole context is re-cached at 2×).
   Pass paths to subagents, not file contents.
 - Token baseline and measurement scripts: `scripts/telemetry/` (BOS-49).
+- **The phase-2 alarm.** `scripts/signals.py` runs at session start. It prints nothing unless a deferred BOS-49
+  component has evidence: C20 reviewer or gate wording removed, C16 the same legal research twice, C1 many department
+  calls in Claude Code, C7 frequent persona pastes, C12 files waiting in `_מערכת/incoming`. A 🔔 line: tell Boaz first,
+  in one line. He decides each component: build it, or "not now" → `python3 scripts/signals.py --ack <ID>`.
+  `--status` shows all five; `--venture <path>` adds a venture folder to read. Its state is in
+  `~/.business-os/signals.json`, kept off this public repo; a machine without `~/.business-os` gets nothing.

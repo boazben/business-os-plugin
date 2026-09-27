@@ -9,7 +9,14 @@ cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}" 
 if [ "$(git config --get core.hooksPath 2>/dev/null)" != "scripts/git-hooks" ]; then
   git config core.hooksPath scripts/git-hooks
 fi
+# BOS-49 phase 2: one line when a deferred component's signal lit (scripts/signals.py). Output is
+# either all plain text or one JSON object, never both, so Claude Code can read it.
+signals_mode=--hook
 if ! command -v jq >/dev/null 2>&1; then
   echo "session-start: jq is missing — the pre-commit version bump needs it; install jq before committing plugin changes."
+  signals_mode=
+fi
+if command -v python3 >/dev/null 2>&1 && [ -f scripts/signals.py ]; then
+  timeout 8 python3 scripts/signals.py $signals_mode 2>/dev/null
 fi
 exit 0
