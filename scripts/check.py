@@ -8,7 +8,9 @@
    ~/.business-os/approved-anchor-removals.txt.
 2. Read instructions rewritten in BOS-49 do not go back to English venture paths
    (the venture folders are Hebrew; an English path reads nothing, or a whole folder).
-3. The shared prompt sections (plugins/business-os/shared/) are identical in every agent that
+3. Every agent and skill frontmatter value parses as YAML: an unquoted value with ': ' in it is
+   a YAML error, and the loader may drop the agent or skill (supply-os review, 28.9.2026).
+4. The shared prompt sections (plugins/business-os/shared/) are identical in every agent that
    carries them: the review rules in every department head, the verdict line and blocking label
    in every reviewer — and the reviewers are exactly the set skills/ledger/report.py checks
    (BOS-49 C9/C10). A section edited in one agent only would quietly split the rules.
@@ -125,6 +127,7 @@ HEADS = [
     "plugins/design-os/agents/design-lead.md",
     "plugins/rnd-os/agents/rnd-lead.md",
     "plugins/business-os/agents/platform-lead.md",
+    "plugins/supply-os/agents/supply-lead.md",
 ]
 HEAD_RULES = "plugins/business-os/shared/head-review-rules.md"
 REVIEWER_CONTRACT = "plugins/business-os/shared/reviewer-contract.md"
@@ -176,6 +179,40 @@ def check_shared(read=None):
     return fails
 
 
+FRONTMATTER_GLOBS = ("plugins/*/agents/*.md", "plugins/*/skills/*/SKILL.md")
+
+
+def check_frontmatter(read=None):
+    """Top-level `key: value` lines of each frontmatter; a plain (unquoted) value may not
+    contain ': ' — YAML reads it as a nested mapping and the whole block fails to parse."""
+    if read is None:
+        def read(rel):
+            path = ROOT / rel
+            return path.read_text(encoding="utf-8") if path.exists() else None
+    fails = []
+    for pattern in FRONTMATTER_GLOBS:
+        for p in sorted(ROOT.glob(pattern)):
+            rel = str(p.relative_to(ROOT))
+            text = read(rel) or ""
+            lines = text.splitlines()
+            if not lines or lines[0].strip() != "---" or "---" not in [l.strip() for l in lines[1:]]:
+                continue
+            end = [l.strip() for l in lines[1:]].index("---") + 1
+            for line in lines[1:end]:
+                m = re.match(r"^([A-Za-z_-]+):\s+(.*)$", line)
+                if not m:
+                    continue
+                value = m.group(2).strip()
+                if value[:1] in ("|", ">", "[", "{"):
+                    continue
+                if value[:1] == '"' and not re.fullmatch(r'"(?:[^"\\]|\\.)*"', value) or \
+                        value[:1] == "'" and not re.fullmatch(r"'(?:[^']|'')*'", value):
+                    fails.append(f"{rel}: frontmatter '{m.group(1)}' is a broken quoted value (a quote inside it, like מנכ\"ל?) — YAML fails; drop the quotes and use ' — ' instead of ': '")
+                elif value[:1] not in ("'", '"') and (": " in value or value.endswith(":")):
+                    fails.append(f"{rel}: frontmatter '{m.group(1)}' has ': ' in an unquoted value — YAML fails; use ' — ' instead")
+    return fails
+
+
 def main(argv):
     staged = "--staged" in argv
     argv = [a for a in argv if a != "--staged"]
@@ -197,7 +234,8 @@ def main(argv):
     base = (git_show("HEAD:scripts/persona-anchors.txt") or "") + "\n" + trusted_text()
     approved = APPROVED.read_text(encoding="utf-8", errors="replace") if APPROVED.exists() else ""
     read = (lambda rel: git_show(f":{rel}")) if staged else None
-    fails = check_persona(persona, anchors_text, base, approved) + check_read_paths() + check_shared(read)
+    fails = (check_persona(persona, anchors_text, base, approved) + check_read_paths() + check_shared(read)
+             + check_frontmatter(read))
     for f in fails:
         print(f"check: {f}", file=sys.stderr)
     return 1 if fails else 0

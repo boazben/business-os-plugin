@@ -1,0 +1,736 @@
+{
+ "_doc": "Field catalog for the import-and-sale simulation. Order here = order on the page. owner: who fills it — main (the model running the skill: decisions and venture facts), checks (the implications research), costs (the numbers research). decision: the founder chooses it, so scenarios and sensitivity leave it alone. mode_dependent: the value differs by freight mode; the data may hold by_mode {air|sea|fixed: {value, low, high}} and the page switches with the mode. vat_domestic values are entered as paid, with VAT. kind: money (units usd/ils/pct), rate (%), count, number, choice. pct_of: the base a % is taken from. pers: allowed bases; the first is the default. vat_domestic: the price paid includes Israeli VAT, which a licensed dealer reclaims. fact + max_age: shared across products in the venture facts file, reused while younger than max_age days.",
+ "groups": [
+  {
+   "id": "general",
+   "label": "הנחות כלליות"
+  },
+  {
+   "id": "sale",
+   "label": "מכירה"
+  },
+  {
+   "id": "buy",
+   "label": "קנייה מהספק"
+  },
+  {
+   "id": "freight",
+   "label": "שילוח לארץ"
+  },
+  {
+   "id": "tax",
+   "label": "מכס, מסים ותקינה"
+  },
+  {
+   "id": "ops",
+   "label": "משלוח ללקוח ועמלות"
+  },
+  {
+   "id": "mkt",
+   "label": "שיווק, החזרות ואחריות"
+  },
+  {
+   "id": "fixed",
+   "label": "חד־פעמי וקבוע"
+  }
+ ],
+ "fields": {
+  "fx": {
+   "group": "general",
+   "owner": "costs",
+   "kind": "number",
+   "label": "שער הדולר",
+   "suffix": "₪ לדולר",
+   "max": 5,
+   "step": 0.01,
+   "fact": "fx",
+   "max_age": 14,
+   "hint": "שער יציג של בנק ישראל. התאריך הוא תאריך השער."
+  },
+  "dealer": {
+   "group": "general",
+   "owner": "main",
+   "kind": "choice",
+   "label": "סוג העוסק",
+   "options": {
+    "exempt": "עוסק פטור",
+    "licensed": "עוסק מורשה"
+   },
+   "fact": "dealer",
+   "max_age": 90,
+   "hint": "עוסק פטור משלם מע״מ ביבוא ולא מקזז, ולא גובה מע״מ במכירה. עוסק מורשה מקזז וגובה."
+  },
+  "target_margin": {
+   "group": "general",
+   "owner": "main",
+   "decision": true,
+   "kind": "rate",
+   "label": "רווח יעד",
+   "suffix": "% מהסכום שהלקוח משלם",
+   "max": 60,
+   "step": 1,
+   "hint": "החלטה של המייסד. ממנו נגזרים המחיר הנדרש ומחיר הקנייה שמעליו לא קונים."
+  },
+  "exempt_ceiling": {
+   "group": "general",
+   "owner": "checks",
+   "kind": "money",
+   "units": [
+    "ils"
+   ],
+   "pers": [
+    "year"
+   ],
+   "label": "תקרת מחזור לעוסק פטור",
+   "max": 300000,
+   "step": 1000,
+   "fact": "exempt_ceiling",
+   "max_age": 120,
+   "hint": "מחזור שנתי שמעליו חייבים לעבור לעוסק מורשה."
+  },
+  "price": {
+   "group": "sale",
+   "owner": "main",
+   "decision": true,
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "sale"
+   ],
+   "label": "מחיר לצרכן",
+   "max": 1000,
+   "step": 1,
+   "hint": "מה שהלקוח משלם על המוצר. לעוסק מורשה — כולל מע״מ."
+  },
+  "ship_paid": {
+   "group": "sale",
+   "owner": "main",
+   "decision": true,
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "sale"
+   ],
+   "label": "דמי משלוח שהלקוח משלם",
+   "max": 60,
+   "step": 1,
+   "hint": "0 = משלוח חינם."
+  },
+  "sales_pm": {
+   "group": "sale",
+   "owner": "main",
+   "kind": "count",
+   "label": "מכירות בחודש",
+   "max": 200,
+   "step": 1,
+   "hint": "קצב מכירה צפוי. קובע כמה זמן לוקח למכור את ההזמנה ואיך מתחלקות ההוצאות הקבועות."
+  },
+  "alt_price": {
+   "group": "sale",
+   "owner": "checks",
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "sale"
+   ],
+   "label": "כמה הלקוח משלם אם הוא מזמין לבד",
+   "max": 1000,
+   "step": 1,
+   "compare_only": true,
+   "hint": "הכי זול שהלקוח ישלם על יחידה אחת של אותו מוצר, או של מוצר שקול, עד הבית בישראל: כולל משלוח ומסים, בלי הנחת כמות. להשוואה בלבד, לא נכנס לחישוב."
+  },
+  "qty": {
+   "group": "buy",
+   "owner": "main",
+   "decision": true,
+   "kind": "count",
+   "label": "יחידות בהזמנה",
+   "min": 1,
+   "max": 1000,
+   "step": 1,
+   "hint": "כמות במשלוח אחד מהספק."
+  },
+  "goods": {
+   "group": "buy",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "usd",
+    "ils"
+   ],
+   "pers": [
+    "unit",
+    "shipment"
+   ],
+   "label": "מחיר קנייה מהספק",
+   "max": 100,
+   "step": 0.1,
+   "hint": "כמו שהספק כתב, בתנאי המסירה שבהצעה (FOB/EXW). בלי שילוח."
+  },
+  "pay_fee": {
+   "group": "buy",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "pct",
+    "usd",
+    "ils"
+   ],
+   "pct_of": "goods",
+   "pers": [
+    "shipment",
+    "unit"
+   ],
+   "label": "עמלות תשלום לספק והמרת מטבע",
+   "max": 8,
+   "step": 0.1,
+   "hint": "עמלת הפלטפורמה או ההעברה הבנקאית ומרווח ההמרה."
+  },
+  "defect": {
+   "group": "buy",
+   "owner": "costs",
+   "kind": "rate",
+   "label": "יחידות פגומות שלא נמכרות",
+   "suffix": "% מההזמנה",
+   "max": 20,
+   "step": 0.5,
+   "hint": "העלות שלהן מתחלקת על היחידות שכן נמכרות."
+  },
+  "freight_mode": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "choice",
+   "label": "דרך השילוח",
+   "options": {
+    "air": "אווירי, לפי ק״ג",
+    "sea": "ימי LCL, לפי קוב",
+    "fixed": "מחיר קבוע / שליח"
+   },
+   "hint": "אווירי מחויב לפי הגבוה מבין משקל אמיתי למשקל נפחי. ימי מחויב לפי קוב, עם מינימום."
+  },
+  "unit_kg": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "number",
+   "label": "משקל ליחידה ארוזה",
+   "suffix": "ק״ג",
+   "max": 5,
+   "step": 0.01,
+   "hint": "כולל האריזה של הספק."
+  },
+  "unit_l": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "number",
+   "label": "נפח ליחידה ארוזה",
+   "suffix": "ליטר",
+   "max": 20,
+   "step": 0.1,
+   "hint": "אורך × רוחב × גובה של הקופסה בס״מ, חלקי 1,000."
+  },
+  "air_rate": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "usd",
+    "ils"
+   ],
+   "pers": [
+    "kg"
+   ],
+   "label": "מחיר אווירי",
+   "max": 20,
+   "step": 0.1,
+   "show_if": {
+    "freight_mode": [
+     "air"
+    ]
+   },
+   "hint": "לק״ג לחיוב, מהצעה של משלח. במוצר עם סוללה — הצעה שכתוב בה שהסוללה בפנים."
+  },
+  "vol_factor": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "number",
+   "label": "משקל נפחי",
+   "suffix": "ק״ג לקוב",
+   "max": 400,
+   "step": 1,
+   "show_if": {
+    "freight_mode": [
+     "air"
+    ]
+   },
+   "fact": "vol_factor",
+   "max_age": 365,
+   "hint": "לפי המחלק של המשלח (מחלק 6,000 = 167 ק״ג לקוב)."
+  },
+  "sea_rate": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "usd",
+    "ils"
+   ],
+   "pers": [
+    "cbm"
+   ],
+   "label": "מחיר ימי",
+   "max": 400,
+   "step": 5,
+   "show_if": {
+    "freight_mode": [
+     "sea"
+    ]
+   },
+   "hint": "לקוב, מהצעה של משלח."
+  },
+  "sea_min_cbm": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "number",
+   "label": "מינימום חיוב ימי",
+   "suffix": "קוב",
+   "max": 5,
+   "step": 0.1,
+   "show_if": {
+    "freight_mode": [
+     "sea"
+    ]
+   },
+   "fact": "sea_min_cbm",
+   "max_age": 90,
+   "hint": "משלוח קטן מזה משלם כאילו הוא בגודל הזה."
+  },
+  "freight_fixed": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "usd",
+    "ils"
+   ],
+   "pers": [
+    "shipment",
+    "unit"
+   ],
+   "label": "מחיר השילוח",
+   "max": 3000,
+   "step": 1,
+   "show_if": {
+    "freight_mode": [
+     "fixed"
+    ]
+   },
+   "hint": "הצעה סגורה של משלח או של שליח (DHL, FedEx, הספק). שליח שמתמחר לפי ק״ג — בדרך 'אווירי'."
+  },
+  "freight_extra": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "usd",
+    "ils"
+   ],
+   "pers": [
+    "shipment",
+    "unit"
+   ],
+   "mode_dependent": true,
+   "label": "עלויות קבועות לשילוח",
+   "max": 500,
+   "step": 5,
+   "hint": "איסוף אצל הספק, מסמכי יצוא, מינימום חיוב של המשלח. בנוסף למחיר לק״ג או לקוב."
+  },
+  "dg_surcharge": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "pct",
+    "usd",
+    "ils"
+   ],
+   "pct_of": "freight",
+   "pers": [
+    "shipment",
+    "unit"
+   ],
+   "mode_dependent": true,
+   "label": "תוספת לחומרים מסוכנים",
+   "max": 100,
+   "step": 1,
+   "hint": "תוספת על השילוח בגלל סוללה או חומר מסוכן."
+  },
+  "insurance": {
+   "group": "freight",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "pct",
+    "usd",
+    "ils"
+   ],
+   "pct_of": "goods_freight",
+   "pers": [
+    "shipment",
+    "unit"
+   ],
+   "label": "ביטוח מטען",
+   "max": 3,
+   "step": 0.1,
+   "hint": "0 = בלי ביטוח."
+  },
+  "duty": {
+   "group": "tax",
+   "owner": "checks",
+   "kind": "rate",
+   "label": "מכס",
+   "suffix": "% מ־CIF",
+   "max": 40,
+   "step": 0.5,
+   "hint": "לפי פרט המכס (HS) של המוצר."
+  },
+  "purchase_tax": {
+   "group": "tax",
+   "owner": "checks",
+   "kind": "rate",
+   "label": "מס קנייה",
+   "suffix": "% מ־CIF ומכס",
+   "max": 100,
+   "step": 1,
+   "hint": "רוב המוצרים פטורים. לפי פרט המכס."
+  },
+  "vat": {
+   "group": "tax",
+   "owner": "checks",
+   "kind": "rate",
+   "label": "מע״מ",
+   "suffix": "%",
+   "max": 25,
+   "step": 0.5,
+   "fact": "vat",
+   "max_age": 90,
+   "hint": "חל ביבוא (על CIF, מכס ומס קנייה) ובמכירה של עוסק מורשה."
+  },
+  "clearance": {
+   "group": "tax",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "usd",
+    "ils"
+   ],
+   "pers": [
+    "shipment",
+    "unit"
+   ],
+   "vat_domestic": true,
+   "mode_dependent": true,
+   "label": "שחרור, נמל, עמיל מכס והובלה למחסן",
+   "max": 3000,
+   "step": 10,
+   "max_age": 90,
+   "hint": "כל מה שמשלמים בארץ עד שהסחורה אצלנו, כמו שמשלמים בפועל."
+  },
+  "std_shipment": {
+   "group": "tax",
+   "owner": "checks",
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "shipment",
+    "unit"
+   ],
+   "vat_domestic": true,
+   "label": "תקינה לכל משלוח",
+   "max": 3000,
+   "step": 50,
+   "hint": "אישור משלוח, הצהרת יבואן או בדיקה, לפי קבוצת היבוא."
+  },
+  "std_onetime": {
+   "group": "tax",
+   "owner": "checks",
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "once"
+   ],
+   "vat_domestic": true,
+   "label": "תקינה ואישורים חד־פעמיים",
+   "max": 20000,
+   "step": 100,
+   "hint": "אישור דגם, בדיקת מעבדה, אישור של משרד ממשלתי."
+  },
+  "compliance_unit": {
+   "group": "tax",
+   "owner": "checks",
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "unit",
+    "shipment"
+   ],
+   "vat_domestic": true,
+   "label": "ציות ליחידה",
+   "max": 20,
+   "step": 0.5,
+   "hint": "מדבקה ועלון בעברית, סימון, דמי מחזור (גם דמי חבר שנתיים, מחולקים ליחידות של שנה)."
+  },
+  "pack": {
+   "group": "ops",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "sale"
+   ],
+   "vat_domestic": true,
+   "label": "אריזה להזמנה",
+   "max": 30,
+   "step": 0.5,
+   "hint": "קרטון, מילוי, מדבקה, כרטיס."
+  },
+  "ship_out": {
+   "group": "ops",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "sale"
+   ],
+   "vat_domestic": true,
+   "label": "משלוח ללקוח",
+   "max": 80,
+   "step": 1,
+   "hint": "לפי הגודל והמשקל של החבילה."
+  },
+  "clearing": {
+   "group": "ops",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "pct",
+    "ils"
+   ],
+   "pct_of": "charged",
+   "pers": [
+    "sale"
+   ],
+   "vat_domestic": true,
+   "label": "סליקה",
+   "max": 5,
+   "step": 0.1,
+   "fact": "clearing",
+   "max_age": 90,
+   "hint": "אחוז מהסכום שנגבה. לא מוחזר כשהלקוח מחזיר."
+  },
+  "clearing_fixed": {
+   "group": "ops",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "ils"
+   ],
+   "pers": [
+    "sale"
+   ],
+   "vat_domestic": true,
+   "label": "סליקה, סכום קבוע לעסקה",
+   "max": 5,
+   "step": 0.1,
+   "fact": "clearing_fixed",
+   "max_age": 90,
+   "hint": "0 אם אין."
+  },
+  "platform_fee": {
+   "group": "ops",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "pct",
+    "ils",
+    "usd"
+   ],
+   "pct_of": "price",
+   "pers": [
+    "sale"
+   ],
+   "label": "עמלת פלטפורמה",
+   "max": 25,
+   "step": 0.5,
+   "hint": "אם מוכרים דרך מרקטפלייס. 0 באתר עצמאי."
+  },
+  "cac": {
+   "group": "mkt",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd",
+    "pct"
+   ],
+   "pct_of": "price",
+   "pers": [
+    "sale"
+   ],
+   "label": "פרסום, עלות להזמנה",
+   "max": 300,
+   "step": 1,
+   "hint": "כמה עולה בממוצע להביא הזמנה אחת, כולל הזמנות שחוזרות."
+  },
+  "ret_rate": {
+   "group": "mkt",
+   "owner": "costs",
+   "kind": "rate",
+   "label": "שיעור החזרות",
+   "suffix": "% מההזמנות",
+   "max": 40,
+   "step": 0.5,
+   "hint": "ביטול עסקה והחזרה של המוצר."
+  },
+  "ret_ship": {
+   "group": "mkt",
+   "owner": "checks",
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "sale"
+   ],
+   "vat_domestic": true,
+   "label": "משלוח החזרה שאנחנו משלמים, להזמנה שחוזרת",
+   "max": 80,
+   "step": 1,
+   "hint": "לכל הזמנה שחוזרת, לא לכל מכירה. ממוצע של המקרים: ביטול רגיל (לרוב הלקוח מחזיר) ופגם (עלינו)."
+  },
+  "ret_loss": {
+   "group": "mkt",
+   "owner": "costs",
+   "kind": "rate",
+   "label": "ירידת ערך ליחידה שחוזרת",
+   "suffix": "% מעלות הנחיתה",
+   "max": 100,
+   "step": 1,
+   "hint": "יחידה שנפתחה, נפגעה או צריכה אריזה חדשה."
+  },
+  "ret_fee": {
+   "group": "mkt",
+   "owner": "checks",
+   "kind": "money",
+   "units": [
+    "pct",
+    "ils"
+   ],
+   "pct_of": "price",
+   "pers": [
+    "sale"
+   ],
+   "label": "דמי ביטול שנשארים אצלנו",
+   "max": 10,
+   "step": 0.5,
+   "fact": "ret_fee",
+   "max_age": 90,
+   "hint": "מה שגובים בפועל בביטול, עד המותר בחוק (המותר — בבדיקת ביטול עסקה). 0 = לא גובים."
+  },
+  "ret_fee_cap": {
+   "group": "mkt",
+   "owner": "checks",
+   "kind": "money",
+   "units": [
+    "ils"
+   ],
+   "pers": [
+    "sale"
+   ],
+   "label": "תקרת דמי הביטול",
+   "max": 200,
+   "step": 5,
+   "fact": "ret_fee_cap",
+   "max_age": 90,
+   "hint": "דמי הביטול בפועל הם הנמוך מבין השניים."
+  },
+  "warranty": {
+   "group": "mkt",
+   "owner": "checks",
+   "kind": "money",
+   "units": [
+    "pct",
+    "ils",
+    "usd"
+   ],
+   "pct_of": "landed",
+   "pers": [
+    "sale"
+   ],
+   "label": "שמורה לאחריות ותיקונים",
+   "max": 15,
+   "step": 0.5,
+   "hint": "יחידות חלופיות, תיקונים ושירות בתקופת האחריות."
+  },
+  "onetime_other": {
+   "group": "fixed",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "once"
+   ],
+   "vat_domestic": true,
+   "label": "חד־פעמי אחר",
+   "max": 20000,
+   "step": 100,
+   "hint": "דוגמאות ומשלוחן, צילום, עיצוב אריזה, תבנית. מתחלק על ההזמנה הראשונה."
+  },
+  "monthly": {
+   "group": "fixed",
+   "owner": "costs",
+   "kind": "money",
+   "units": [
+    "ils",
+    "usd"
+   ],
+   "pers": [
+    "month"
+   ],
+   "vat_domestic": true,
+   "label": "הוצאות קבועות לחודש",
+   "max": 3000,
+   "step": 50,
+   "fact": "monthly",
+   "max_age": 90,
+   "hint": "אתר, כלים, הנהלת חשבונות. מתחלק על המכירות של החודש."
+  }
+ }
+}

@@ -1,0 +1,203 @@
+{
+  "_doc": "What to check before importing and selling a product in Israel. scope product = the answer belongs to this product (or its supplier); every other check has the same answer for any product with the trait, so init copies it from an earlier simulation while it is fresh. base = every product; traits add checks. A check is a question to answer with a source, never an answer: no rates, fees or rulings are written here. affects = the simulation fields the answer changes. can_kill = the answer alone can stop the product. na_unless = fields that are not relevant (status na) unless the product has one of these traits.",
+  "areas": ["מסלול יבוא", "מכס ומסים", "תקינה ובטיחות", "רגולטור נוסף", "שילוח", "צרכנות ואחריות", "סימון", "מותג וקניין רוחני", "שוק"],
+  "na_unless": {
+    "dg_surcharge": ["lithium_builtin", "lithium_separate", "liquid_aerosol", "magnets"]
+  },
+  "base": [
+    {"id": "commercial_import", "area": "מסלול יבוא", "title": "יבוא מסחרי, לא אישי",
+     "verify": "האם התוכנית (קנייה קמעונאית, משלוחים קטנים, הזמנה לכל לקוח בנפרד) היא יבוא מסחרי עם כל החובות; האם פטור מינימיס או 'יבוא אישי' חלים בכלל כשמוכרים",
+     "where": "פסיקה קיימת בתיקייה המשפטית; צו יבוא אישי; רשות המסים", "affects": ["std_shipment", "clearance"], "can_kill": false},
+    {"id": "hs_duty", "scope": "product", "area": "מכס ומסים", "title": "פרט מכס ושיעור מכס",
+     "verify": "פרט המכס (HS) של המוצר או 2–3 מועמדים, שיעור המכס מארץ המקור, והאם יש הסכם סחר שמוריד אותו",
+     "where": "תעריף המכס של רשות המסים (שער עולמי); עמיל מכס בטלפון, בחינם", "affects": ["duty"], "can_kill": false},
+    {"id": "purchase_tax", "scope": "product", "area": "מכס ומסים", "title": "מס קנייה",
+     "verify": "האם פרט המכס חייב במס קנייה ובאיזה שיעור; האם יש סיווג קרוב שכן חייב",
+     "where": "תעריף המכס; עמיל מכס", "affects": ["purchase_tax"], "can_kill": false},
+    {"id": "vat_dealer", "area": "מכס ומסים", "title": "מע״מ ביבוא וסוג העוסק",
+     "verify": "שיעור המע״מ, על איזה בסיס הוא מחושב ביבוא, מי מקזז, ומה תקרת עוסק פטור השנה",
+     "where": "רשות המסים; פסיקות המס בתיקייה המשפטית", "affects": ["vat", "dealer", "exempt_ceiling"], "can_kill": false},
+    {"id": "import_regime", "scope": "product", "area": "תקינה ובטיחות", "title": "צו יבוא חופשי: תקן רשמי או אישור",
+     "verify": "האם המוצר (או רכיב בו) בתוספת של צו יבוא חופשי, איזה תקן רשמי חל, באיזו קבוצת יבוא (אישור דגם, אישור משלוח, הצהרת יבואן), כמה זה עולה וכמה זמן",
+     "where": "מכון התקנים (רשימת תקנים רשמיים, מדריך ליבואן המתחיל); צו יבוא חופשי; עמיל מכס", "affects": ["std_onetime", "std_shipment"], "can_kill": true},
+    {"id": "hebrew_labeling", "area": "סימון", "title": "סימון בעברית",
+     "verify": "מה חייב להופיע על המוצר או האריזה בעברית (שם, יבואן, ארץ ייצור, אזהרות, הוראות) ואיך עושים את זה בזול",
+     "where": "צו הגנת הצרכן (סימון טובין); צווים ייעודיים לקטגוריה", "affects": ["compliance_unit"], "can_kill": false},
+    {"id": "warranty", "scope": "product", "area": "צרכנות ואחריות", "title": "אחריות ושירות אחרי מכירה",
+     "verify": "האם המוצר חייב באחריות לפי התקנות (ומאיזה מחיר), מה חובת היבואן כשאין יבואן רשמי, זמני תיקון, תעודת אחריות בעברית",
+     "where": "תקנות הגנת הצרכן (אחריות ושירות לאחר מכירה); פסיקה קיימת בתיקייה המשפטית", "affects": ["warranty"], "can_kill": false},
+    {"id": "cancellation", "area": "צרכנות ואחריות", "title": "ביטול עסקה מרחוק והחזרות",
+     "verify": "כמה ימים יש ללקוח, כמה דמי ביטול מותר לגבות, מי משלם את משלוח ההחזרה, והאם יש חריג שחל על המוצר",
+     "where": "חוק הגנת הצרכן ותקנות ביטול עסקה", "affects": ["ret_fee", "ret_fee_cap", "ret_ship", "ret_rate"], "can_kill": false},
+    {"id": "brand_ip", "scope": "product", "area": "מותג וקניין רוחני", "title": "מותג, יבואן רשמי וסימן מסחר",
+     "verify": "האם יש יבואן רשמי בישראל, האם שם או לוגו של היצרן רשומים כסימן מסחר, האם מותר להשתמש בתמונות שלו, והאם אפשר לקבל את המוצר גנרי או במיתוג שלנו",
+     "where": "רשם סימני המסחר; אתר היצרן; הספק", "affects": [], "can_kill": true},
+    {"id": "product_liability", "scope": "product", "area": "תקינה ובטיחות", "title": "בטיחות ואחריות לנזק",
+     "verify": "איך המוצר יכול לגרום נזק (לאדם, לרכוש, למכשיר של הלקוח), אילו אזהרות צריך, והאם יש תלונות חוזרות על כשל כזה",
+     "where": "ביקורות קונים; ריקולים; אתר היצרן", "affects": ["warranty", "ret_rate"], "can_kill": false},
+    {"id": "shipping_class", "scope": "product", "area": "שילוח", "title": "הגבלות שילוח ודרך השילוח",
+     "verify": "האם יש הגבלה על שילוח המוצר (סוללות, נוזלים, מגנטים), מה המשקל והנפח הארוזים, ומה זול יותר בכמות הזו: אווירי, ימי או שליח",
+     "where": "הצעות של משלחים; הספק (מידות קרטון ומשקל)", "affects": ["freight_mode", "unit_kg", "unit_l", "air_rate", "sea_rate", "freight_fixed"], "can_kill": false},
+    {"id": "direct_competition", "scope": "product", "area": "שוק", "title": "מה הלקוח יכול לקנות לבד",
+     "verify": "את אותו מוצר, או מוצר שקול, כמה הוא עולה ללקוח ישראלי (אמזון, אלי, יבואן בארץ) כולל משלוח ומסים, ומה אנחנו נותנים שהוא לא מקבל שם",
+     "where": "אמזון, AliExpress, זאפ, חנויות בארץ", "affects": ["alt_price", "price"], "can_kill": true}
+  ],
+  "traits": {
+    "lithium_builtin": {"label": "סוללת ליתיום מובנית", "tell": "סוללה נטענת בתוך המוצר (טעינה ב-USB, 'rechargeable', Li-ion / Li-Po)",
+      "checks": [
+        {"id": "li_standard", "area": "תקינה ובטיחות", "title": "תקן סוללות ליתיום",
+         "verify": "האם תקן ישראלי רשמי לסוללות ליתיום חל גם על סוללה שמותקנת במוצר, באיזו קבוצת יבוא, האם יש מסלול פטור, ועלות וזמן של אישור הדגם",
+         "where": "מכון התקנים (אביזרי חשמל); פסיקה קיימת בתיקייה המשפטית", "affects": ["std_onetime", "std_shipment"], "can_kill": true},
+        {"id": "li_shipping", "area": "שילוח", "title": "שילוח סוללת ליתיום בתוך מוצר",
+         "verify": "הסיווג לשילוח (UN3481, הוראת אריזה), מה נדרש (מצב טעינה, סימון, מסמכים), אילו משלחים מקבלים, וכמה זה מוסיף",
+         "where": "הצעה בכתב ממשלח שכתוב בה שהסוללה בתוך המוצר", "affects": ["dg_surcharge", "air_rate", "freight_mode"], "can_kill": false},
+        {"id": "li_docs", "scope": "product", "area": "תקינה ובטיחות", "title": "דוחות בדיקה מהספק",
+         "verify": "האם הספק נותן דוח בדיקה לתקן הסוללות (או CB), UN38.3 ו-MSDS, ועל הדגם המדויק",
+         "where": "הספק, בכתב", "affects": ["std_onetime"], "can_kill": true}
+      ]},
+    "lithium_separate": {"label": "סוללת ליתיום נפרדת", "tell": "סוללה נטענת שנשלפת או ארוזה ליד המוצר, לא בתוכו",
+      "checks": [
+        {"id": "li_sep_standard", "area": "תקינה ובטיחות", "title": "תקן סוללות ליתיום (סוללה נפרדת)",
+         "verify": "תקן, קבוצת יבוא ואישור לסוללה עצמה; האם כדאי לבחור דגם עם סוללה מובנית או בלי",
+         "where": "מכון התקנים", "affects": ["std_onetime", "std_shipment"], "can_kill": true},
+        {"id": "li_sep_shipping", "area": "שילוח", "title": "שילוח סוללה ארוזה עם המוצר",
+         "verify": "סיווג לשילוח (UN3481 ארוזה עם ציוד או UN3480 לבד), מגבלות אוויר ודואר, ותוספת מחיר",
+         "where": "הצעה בכתב ממשלח", "affects": ["dg_surcharge", "air_rate", "freight_mode"], "can_kill": true}
+      ]},
+    "coin_cell": {"label": "סוללת כפתור / מטבע", "tell": "סוללה קטנה עגולה (CR2032 וכד')",
+      "checks": [
+        {"id": "coin_cell_safety", "area": "תקינה ובטיחות", "title": "סוללת כפתור — סכנת בליעה",
+         "verify": "דרישות אזהרה, מכסה מאובטח ואריזה לסוללת כפתור, והאם הן חלות על המוצר",
+         "where": "מכון התקנים; צווי הגנת הצרכן", "affects": ["compliance_unit"], "can_kill": false}
+      ]},
+    "battery_primary": {"label": "סוללות רגילות (AA/AAA)", "tell": "עובד על סוללות חד-פעמיות רגילות, לא נטענות",
+      "checks": [
+        {"id": "primary_batteries", "area": "תקינה ובטיחות", "title": "סוללות רגילות בקופסה",
+         "verify": "האם סוללות שמגיעות עם המוצר חייבות בתקן או סימון; האם עדיף לשלוח בלי סוללות",
+         "where": "מכון התקנים", "affects": ["compliance_unit"], "can_kill": false}
+      ]},
+    "charger_included": {"label": "מטען או ספק כוח בקופסה", "tell": "מגיע עם מתאם לשקע החשמל",
+      "checks": [
+        {"id": "charger_std", "area": "תקינה ובטיחות", "title": "תקן למטען או לספק כוח",
+         "verify": "איזה תקן רשמי חל על המתאם, קבוצת יבוא, עלות; האם אפשר לשלוח רק כבל USB בלי מתאם",
+         "where": "מכון התקנים", "affects": ["std_onetime", "std_shipment"], "can_kill": true}
+      ]},
+    "mains_powered": {"label": "מתחבר ישירות לחשמל", "tell": "תקע לשקע 230V, בלי סוללה",
+      "checks": [
+        {"id": "mains_std", "scope": "product", "area": "תקינה ובטיחות", "title": "בטיחות חשמל ותקע ישראלי",
+         "verify": "איזה תקן חשמל רשמי חל, קבוצת יבוא, תקע ישראלי, עלות וזמן",
+         "where": "מכון התקנים", "affects": ["std_onetime", "std_shipment"], "can_kill": true}
+      ]},
+    "electronic": {"label": "מוצר חשמלי או אלקטרוני", "tell": "כל מוצר עם מעגל חשמלי, מסך, טיימר או סוללה",
+      "checks": [
+        {"id": "weee", "area": "רגולטור נוסף", "title": "מחזור ציוד חשמלי וסוללות",
+         "verify": "האם יבואן קטן חייב להצטרף לגוף מחזור לפי החוק לטיפול סביבתי בציוד חשמלי ובסוללות, מאיזה היקף, ובכמה זה עולה",
+         "where": "המשרד להגנת הסביבה; גופי יישום מוכרים", "affects": ["compliance_unit"], "can_kill": false}
+      ]},
+    "wireless": {"label": "אלחוטי (Bluetooth / Wi-Fi / RF)", "tell": "מתחבר לטלפון או לרשת, שלט רחוק ברדיו",
+      "checks": [
+        {"id": "moc_rf", "area": "רגולטור נוסף", "title": "משרד התקשורת — ציוד אלחוטי",
+         "verify": "האם נדרש אישור או פטור ממשרד התקשורת לשיווק, מי רשאי לבקש (האם עוסק פטור יכול), עלות וזמן; האם יש דגם דומה בלי רכיב אלחוטי",
+         "where": "משרד התקשורת (אגף ציוד); gov.il", "affects": ["std_onetime", "std_shipment"], "can_kill": true}
+      ]},
+    "cellular": {"label": "סלולרי (טלפון / מודם / SIM)", "tell": "מכשיר עם SIM או חיבור לרשת סלולרית",
+      "checks": [
+        {"id": "moc_cell", "area": "רגולטור נוסף", "title": "אישור פטור לציוד סלולרי",
+         "verify": "מה נדרש לשיווק מסחרי של ציוד סלולרי, מי רשאי לבקש (עוסק פטור?), מה מגישים, כמה זמן",
+         "where": "משרד התקשורת; פסיקה קיימת בתיקייה המשפטית", "affects": ["std_onetime"], "can_kill": true},
+        {"id": "volte", "scope": "product", "area": "רגולטור נוסף", "title": "חיבור לרשתות בישראל",
+         "verify": "האם הדגם עובד ברשתות בישראל (4G, VoLTE, שיחות חירום) והאם הוא ברשימות של המפעילים",
+         "where": "אתרי המפעילים; משרד התקשורת", "affects": [], "can_kill": true},
+        {"id": "sar", "scope": "product", "area": "סימון", "title": "קרינה (SAR)",
+         "verify": "מה חובה להציג על האריזה, בעלון ובאתר לגבי קרינה",
+         "where": "תקנות הגנת הצרכן (קרינה מטלפון נייד)", "affects": ["compliance_unit"], "can_kill": false}
+      ]},
+    "wood_raw": {"label": "עץ או במבוק לא מעובד", "tell": "עץ גולמי, עם קליפה, במבוק טבעי, קש, נצרים",
+      "checks": [
+        {"id": "plant_protection", "area": "רגולטור נוסף", "title": "הגנת הצומח",
+         "verify": "האם נדרש היתר יבוא או תעודה פיטוסניטרית לעץ או לבמבוק במצב הזה, עלות וזמן",
+         "where": "שירותי הגנת הצומח (משרד החקלאות)", "affects": ["std_shipment", "std_onetime"], "can_kill": true}
+      ]},
+    "wood_processed": {"label": "עץ מעובד (מלוטש, צבוע, מצופה)", "tell": "מוצר עץ גמור — קופסה, מעמד, רהיט קטן",
+      "checks": [
+        {"id": "wood_processed_check", "area": "רגולטור נוסף", "title": "עץ מעובד — האם פטור",
+         "verify": "האם מוצר עץ מעובד פטור מדרישות הגנת הצומח, ומה עם אריזת עץ ומשטחים (ISPM 15)",
+         "where": "שירותי הגנת הצומח; המשלח", "affects": ["std_shipment"], "can_kill": false},
+        {"id": "wood_quality", "scope": "product", "area": "תקינה ובטיחות", "title": "יובש, סדקים ועובש",
+         "verify": "האם עץ מהספק נסדק או מעלה עובש בשילוח ימי ובאקלים של ישראל, ומה שיעור הפגמים",
+         "where": "ביקורות קונים; הספק; דוגמה", "affects": ["defect", "ret_rate"], "can_kill": false}
+      ]},
+    "food_contact": {"label": "במגע עם מזון או משקה", "tell": "כוס, בקבוק, קופסת אוכל, כלי מטבח",
+      "checks": [
+        {"id": "food_contact_rules", "scope": "product", "area": "רגולטור נוסף", "title": "משרד הבריאות — מגע עם מזון",
+         "verify": "איזה תקן או אישור נדרש לכלים במגע עם מזון, בדיקת נדידה, מי מבצע ובכמה",
+         "where": "משרד הבריאות (שירות המזון); מכון התקנים", "affects": ["std_onetime", "std_shipment"], "can_kill": true}
+      ]},
+    "children": {"label": "מיועד לילדים / צעצוע", "tell": "ילד מתחת לגיל 14 הוא המשתמש (צעצוע, מוצר לחדר ילדים). לא מוצר שהורים קונים כדי להגביל ילדים",
+      "checks": [
+        {"id": "toy_std", "scope": "product", "area": "תקינה ובטיחות", "title": "בטיחות צעצועים",
+         "verify": "האם המוצר נחשב צעצוע, איזה תקן רשמי חל, קבוצת יבוא ובדיקות מעבדה, עלות וזמן",
+         "where": "מכון התקנים", "affects": ["std_onetime", "std_shipment"], "can_kill": true},
+        {"id": "small_parts", "scope": "product", "area": "תקינה ובטיחות", "title": "חלקים קטנים, מגנטים, סוללות",
+         "verify": "אזהרות גיל וחנק, מגנטים חזקים, סוללות נגישות",
+         "where": "מכון התקנים", "affects": ["compliance_unit"], "can_kill": false}
+      ]},
+    "magnets": {"label": "מגנטים חזקים", "tell": "מגנטים ניאודימיום, סגירה מגנטית חזקה",
+      "checks": [
+        {"id": "magnets_ship", "area": "שילוח", "title": "שילוח מגנטים",
+         "verify": "האם עוצמת המגנט מחייבת סיווג מיוחד בשילוח אווירי, ואזהרות בליעה",
+         "where": "משלח", "affects": ["dg_surcharge", "freight_mode"], "can_kill": false}
+      ]},
+    "textile": {"label": "טקסטיל או עור", "tell": "בד, כיסוי, תיק, רצועה",
+      "checks": [
+        {"id": "textile_label", "area": "סימון", "title": "סימון טקסטיל",
+         "verify": "סימון הרכב החומר והוראות טיפול בעברית; עור או פרווה — מה אסור ומה חייב סימון",
+         "where": "צו הגנת הצרכן (סימון טובין)", "affects": ["compliance_unit"], "can_kill": false}
+      ]},
+    "health_medical": {"label": "טענה בריאותית, קוסמטיקה או מגע ממושך עם העור", "tell": "'משפר שינה', 'מרגיע', קרם, מכשיר טיפולי",
+      "checks": [
+        {"id": "moh_health", "scope": "product", "area": "רגולטור נוסף", "title": "משרד הבריאות — תמרוקים ואביזרים רפואיים",
+         "verify": "האם המוצר או הטענה עליו הופכים אותו לתמרוק או לאביזר רפואי שחייב רישום, ומה מותר לכתוב בפרסום",
+         "where": "משרד הבריאות (אמ״ר, תמרוקים)", "affects": ["std_onetime"], "can_kill": true}
+      ]},
+    "liquid_aerosol": {"label": "נוזל, ג׳ל, תרסיס או אבקה", "tell": "כל חומר שאינו מוצק",
+      "checks": [
+        {"id": "liquid_ship", "scope": "product", "area": "שילוח", "title": "שילוח חומרים",
+         "verify": "האם החומר מסווג מסוכן לשילוח (דליק, בלחץ), MSDS, ומגבלות אוויר ודואר",
+         "where": "משלח; הספק (MSDS)", "affects": ["dg_surcharge", "freight_mode"], "can_kill": true}
+      ]},
+    "app_data": {"label": "אפליקציה או חשבון משתמש", "tell": "צריך אפליקציה של היצרן, חשבון או ענן",
+      "checks": [
+        {"id": "app_privacy", "scope": "product", "area": "רגולטור נוסף", "title": "אפליקציה ופרטיות",
+         "verify": "איזה מידע האפליקציה אוספת ואיפה הוא נשמר, האם היא בעברית, ומה קורה ללקוח אם היצרן סוגר אותה",
+         "where": "חנויות האפליקציות; מדיניות הפרטיות של היצרן", "affects": ["ret_rate"], "can_kill": false}
+      ]},
+    "locks_or_restricts": {"label": "נועל, מגביל או שומר על משהו", "tell": "קופסת נעילה, כספת, טיימר שמונע גישה",
+      "checks": [
+        {"id": "lockout", "scope": "product", "area": "תקינה ובטיחות", "title": "גישת חירום ונעילה בטעות",
+         "verify": "מה קורה כשהסוללה מתה או כשצריך את הפריט בחירום, כמה פתיחות חירום יש, ומה אומרים הקונים",
+         "where": "ביקורות קונים; מדריך היצרן", "affects": ["ret_rate", "warranty"], "can_kill": false},
+        {"id": "security_claims", "scope": "product", "area": "צרכנות ואחריות", "title": "מה מותר להבטיח על הנעילה",
+         "verify": "האם אפשר לפתוח את המוצר בכוח או בכלי פשוט, ומה לכן אסור לכתוב בשיווק ('אי אפשר לפתוח') בלי חשיפה להטעיה",
+         "where": "ביקורות קונים; סרטוני פריצה; דוגמה ביד", "affects": ["ret_rate"], "can_kill": false}
+      ]},
+    "private_label": {"label": "מיתוג שלנו (לוגו, אריזה)", "tell": "לוגו על המוצר, אריזה מודפסת, צבע מותאם",
+      "checks": [
+        {"id": "pl_terms", "scope": "product", "area": "מותג וקניין רוחני", "title": "מיתוג אצל הספק",
+         "verify": "כמות מינימום ללוגו ולאריזה, עלות תבנית ודפוס, זמן ייצור, ומה עובר לספק (קבצי לוגו הם צעד שדורש פסיקה משפטית)",
+         "where": "הספק, בכתב", "affects": ["onetime_other", "qty", "goods"], "can_kill": false}
+      ]},
+    "fragile": {"label": "שביר", "tell": "זכוכית, קרמיקה, מסך גדול",
+      "checks": [
+        {"id": "breakage", "scope": "product", "area": "שילוח", "title": "שבר בדרך",
+         "verify": "שיעור שבר בשילוח ובמשלוח ללקוח, אריזה מחוזקת, ומי מכסה נזק",
+         "where": "ביקורות קונים; הספק; משלח", "affects": ["defect", "pack", "insurance", "ret_rate"], "can_kill": false}
+      ]},
+    "bulky": {"label": "גדול או כבד", "tell": "מעל 2 ק״ג, או קופסה מעל 30 ס״מ",
+      "checks": [
+        {"id": "bulky_ship", "scope": "product", "area": "שילוח", "title": "משקל נפחי ומשלוח ללקוח",
+         "verify": "האם המשקל הנפחי מכפיל את השילוח, מתי ימי משתלם, וכמה עולה משלוח ללקוח בגודל הזה",
+         "where": "משלחים; חברות שליחויות", "affects": ["freight_mode", "ship_out", "unit_l"], "can_kill": false}
+      ]}
+  }
+}

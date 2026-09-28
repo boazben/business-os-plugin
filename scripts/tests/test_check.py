@@ -79,5 +79,20 @@ check("a missing source is caught", any("head-review-rules.md: missing" in f for
 r = subprocess.run([sys.executable, str(ROOT / "scripts" / "check.py")], capture_output=True, text=True)
 check("the repo as it is passes (exit 0)", r.returncode == 0)
 
+check("the current tree's frontmatter parses", ck.check_frontmatter() == [])
+agent = "plugins/supply-os/agents/supply-lead.md"
+text = (ROOT / agent).read_text(encoding="utf-8")
+bad = text.replace("description: ", "description: ראש המחלקה: ", 1)
+check("a ': ' in an unquoted description is caught",
+      any("supply-lead.md: frontmatter 'description'" in f for f in ck.check_frontmatter(lambda rel: bad if rel == agent else (ROOT / rel).read_text(encoding="utf-8"))))
+def with_description(value):
+    lines = text.split("\n")
+    i = next(k for k, l in enumerate(lines) if l.startswith("description: "))
+    lines[i] = "description: " + value
+    changed = "\n".join(lines)
+    return ck.check_frontmatter(lambda rel: changed if rel == agent else (ROOT / rel).read_text(encoding="utf-8"))
+check("a well-formed quoted value with ': ' is fine", with_description('"ראש המחלקה: בודק"') == [])
+check("a quoted value broken by a quote inside it is caught", any("broken quoted value" in f for f in with_description('"חו"ל: x"')))
+check("a single-quoted value with a doubled quote is fine", with_description("'it''s: fine'") == [])
 print(f"\n{len(failures)} failed" if failures else "\nall passed")
 sys.exit(1 if failures else 0)

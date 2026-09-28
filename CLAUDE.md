@@ -15,7 +15,7 @@
 - **Tests:** `python3 scripts/tests/test_check.py`, `python3 plugins/business-os/hooks/tests/test_sync_persona.py`,
   `python3 plugins/business-os/hooks/tests/test_board_gate.py`, `python3 plugins/business-os/hooks/tests/test_ledger.py`,
   `python3 plugins/rnd-os/hooks/tests/test_security_gate.py`,
-  `python3 scripts/tests/test_orient.py`, `test_board.py`, `test_conditions.py`, `test_ledger_report.py`, `test_signals.py` (same folder).
+  `python3 scripts/tests/test_orient.py`, `test_board.py`, `test_conditions.py`, `test_ledger_report.py`, `test_signals.py`, `test_import_feasibility.py` (same folder).
 - **No status files.** "Where are we" is computed at read time from the Notion board, the legal rulings
   and the project page. Don't add a file that copies state from another owner. `business-os:orient` does it:
   code (`orient.py`, `board.py`, `conditions.py`) computes the full report, and the model answers with a few

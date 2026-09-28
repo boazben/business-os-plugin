@@ -40,6 +40,7 @@ REVIEWERS = {
     "legal-verifier", "marketing-compliance-auditor", "product-compliance-auditor",
     "data-privacy-auditor", "contract-reviewer", "brand-guardian", "design-critic", "security-lead",
     "code-reviewer", "clean-code-reviewer", "qa-engineer", "build-critic", "team-qa",
+    "supply-verifier",
 }
 CLOUD_ROOTS = ("/home/claude", "/mnt/user-data/outputs")
 SKIP_PARTS = {"__pycache__", "node_modules", ledger.SESSION_DIR}
