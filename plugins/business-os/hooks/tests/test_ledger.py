@@ -249,6 +249,10 @@ def main():
     case("no transcript: says so, with field names", True,
          got.startswith("no usage: transcript not found (fields: agent_id,agent_transcript_path,agent_type,cwd,"))
     case("...the whole field list, past 120 characters", True, len(got) > 120 and got.endswith("transcript_path)"))
+    untyped = dict(event, agent_transcript_path="/nope/agent-y.jsonl", agent_type="")
+    finish(sub, untyped)
+    case("an untyped agent with no transcript is labelled Claude Code's own, not a team member", True,
+         rows()[-1][5].startswith("no usage: an agent with no type"))
 
     print("== the main conversation stops")
     case("exit 0, prints nothing", (0, ""),

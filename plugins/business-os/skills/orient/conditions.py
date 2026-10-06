@@ -18,7 +18,7 @@ import pathlib
 import re
 import sys
 
-ITEM = re.compile(r"^\s*(?:\d+\.|[-*])\s+`(\d{2}ב?\.\d+)`\s*(.*)$")
+ITEM = re.compile(r"^\s*(?:\d+\.|[-*])\s+`(\d{2}[א-ת]?\.\d+)`\s*(.*)$")
 HEADER = re.compile(r"^(?:>\s*)?\*{0,2}(פסיקה|נבדק מול|האתר החי)\s*:\s*\*{0,2}\s*(.*)$")
 UNVERIFIED = re.compile(r"/home/claude|/mnt/user-data|טיוט|מקורות ברשת|לא נבדק")
 

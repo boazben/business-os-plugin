@@ -463,6 +463,10 @@ def finish_row(event, wait=True):
         settle(path)
     fields = ",".join(sorted(str(k) for k in event))
     if not path or not os.path.isfile(path):
+        if subagent and not event.get("agent_type"):
+            # Seen 5.10.2026: every Agent-tool subagent had a type and a transcript; the untyped ones with no
+            # transcript are Claude Code's own agents (a hook of type "agent", for one) — not a team member
+            return who, target, "-", "no usage: an agent with no type (Claude Code's own, e.g. a hook agent) — it keeps no transcript"
         return who, target, verdict_line(reply) or "-", f"no usage: transcript not found (fields: {fields})"
     if os.path.getsize(path) > MAX_TRANSCRIPT:
         return who, target, verdict_line(reply) or "-", "no usage: transcript too large to read"
