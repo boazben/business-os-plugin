@@ -1,0 +1,4 @@
+# The harness config for betterleaks: the default rules. A project adds allowlists in rnd/security/betterleaks-allow.toml,
+# read from the BASE commit — a change can't allowlist its own secret.
+[extend]
+useDefault = true

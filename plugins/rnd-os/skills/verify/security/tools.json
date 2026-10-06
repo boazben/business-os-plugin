@@ -1,0 +1,25 @@
+{
+  "_": "Pinned scanners for rnd-os:verify. Installed under ~/.business-os/tools by `security.py install`; every run checks each binary's sha256 before using it. Third-party rules are fetched at a pinned commit and never committed here (opengrep-rules: LGPL-2.1 + Commons Clause). Changing this file is a security change.",
+  "betterleaks": {
+    "version": "1.9.0",
+    "url": "https://github.com/betterleaks/betterleaks/releases/download/v1.9.0/betterleaks_1.9.0_linux_x64.tar.gz",
+    "archive_sha256": "f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7",
+    "path": "betterleaks-1.9.0/betterleaks",
+    "sha256": "0ace40b41652344608f89967fe93c6caf4faae9a4df20423632c7efb02a4d4e1"
+  },
+  "opengrep": {
+    "version": "1.30.0",
+    "url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep_manylinux_x86",
+    "path": "opengrep-1.30.0/opengrep",
+    "sha256": "35779bdd72e92129c8df2a77f0c55e8c08356801ea92591ef32108d6b28d564c"
+  },
+  "opengrep-rules": {
+    "repo": "https://github.com/opengrep/opengrep-rules.git",
+    "commit": "f1d2b562b414783763fd02a6ed2736eaed622efa",
+    "path": "opengrep-rules"
+  },
+  "csp_evaluator": {
+    "npm": "csp_evaluator@1.1.8",
+    "path": "csp"
+  }
+}

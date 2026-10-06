@@ -4,6 +4,7 @@ Run: python3 plugins/rnd-os/skills/verify/tests/test_verify.py
 Each case builds a small git repo in a temp folder; nothing outside it is touched.
 """
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -14,6 +15,59 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[5]
+
+# Stand-in scanners, so the suite never depends on what is installed on this machine. They behave like the real
+# ones on a marker: betterleaks reports added lines with FAKE_SECRET_, opengrep reports lines with FAKE_SAST,
+# csp_evaluator flags 'unsafe-inline'. The manifest pins their sha256 like the real one does.
+FAKE = pathlib.Path(tempfile.mkdtemp(prefix="verify-fake-tools-"))
+(FAKE / "tools/bl").mkdir(parents=True)
+(FAKE / "tools/og").mkdir()
+(FAKE / "tools/bl/betterleaks").write_text("""#!/usr/bin/env python3
+import json, subprocess, sys
+a = sys.argv[1:]
+repo, opts, rep = a[a.index("git") + 1], a[a.index("--log-opts") + 1], a[a.index("-r") + 1]
+hits, f = [], None
+for line in subprocess.run(["git", "-C", repo, "log", "-p", opts], capture_output=True, text=True).stdout.splitlines():
+    if line.startswith("+++ b/"): f = line[6:]
+    elif line.startswith("+") and "FAKE_SECRET_" in line: hits.append({"RuleID": "fake", "File": f, "StartLine": 1})
+open(rep, "w").write(json.dumps(hits))
+sys.exit(1 if hits else 0)
+""")
+(FAKE / "tools/og/opengrep").write_text("""#!/usr/bin/env python3
+import json, os, pathlib
+res = []
+for p in sorted(pathlib.Path(".").rglob("*")):
+    if p.is_file():
+        for n, line in enumerate(p.read_text(errors="replace").splitlines(), 1):
+            if "FAKE_SAST" in line:
+                res.append({"check_id": "fake.rule", "path": str(p), "start": {"line": n},
+                            "extra": {"lines": line, "message": "fake finding"}})
+print(json.dumps({"results": res, "errors": []}))
+""")
+for b in ("bl/betterleaks", "og/opengrep"):
+    (FAKE / "tools" / b).chmod(0o755)
+rules = FAKE / "tools/rules"
+rules.mkdir()
+for args in (["init", "-q"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "rules"]):
+    subprocess.run(["git", "-C", str(rules), *args], check=True, capture_output=True)
+csp = FAKE / "tools/csp/node_modules/csp_evaluator"
+(csp / "dist").mkdir(parents=True)
+(csp / "package.json").write_text(json.dumps({"name": "csp_evaluator", "version": "1.1.8", "type": "module"}))
+(csp / "dist/parser.js").write_text("export class CspParser { constructor(c) { this.csp = c; } }\n")
+(csp / "dist/evaluator.js").write_text("export class CspEvaluator { constructor(c) { this.c = c; } evaluate() { return this.c.includes(\"unsafe-inline\") ? [{severity: 10, directive: \"script-src\", value: \"'unsafe-inline'\", description: \"fake\"}] : []; } }\n")
+(FAKE / "security/rules").mkdir(parents=True)
+(FAKE / "security/pack.txt").write_text("")
+(FAKE / "security/rules/fake.yaml").write_text("rules: []\n")
+(FAKE / "security/betterleaks.toml").write_text("[extend]\nuseDefault = true\n")
+sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+(FAKE / "security/tools.json").write_text(json.dumps({
+    "betterleaks": {"version": "fake", "path": "bl/betterleaks", "sha256": sha(FAKE / "tools/bl/betterleaks")},
+    "opengrep": {"version": "fake", "path": "og/opengrep", "sha256": sha(FAKE / "tools/og/opengrep")},
+    "opengrep-rules": {"path": "rules", "commit": subprocess.run(["git", "-C", str(rules), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()},
+    "csp_evaluator": {"npm": "csp_evaluator@1.1.8", "path": "csp"}}))
+os.environ.update(BOS_TOOLS_DIR=str(FAKE / "tools"), BOS_SECURITY_DIR=str(FAKE / "security"),
+                  BOS_TOOLS_MANIFEST=str(FAKE / "security/tools.json"))
+
 spec = importlib.util.spec_from_file_location("verify", ROOT / "plugins/rnd-os/skills/verify/scripts/verify.py")
 assert spec and spec.loader
 v = importlib.util.module_from_spec(spec)
@@ -261,6 +315,85 @@ with tempfile.TemporaryDirectory() as d:
     rel = [json.loads(p.read_text()) for p in out.glob("site/*/summary.json")]
     check("release, live unknown → whole tree", any(r["release"] and r["base"] == v.EMPTY_TREE for r in rel))
     check("bad commit → exit 2", quiet(v.main, [str(repo), "--commit", "nope", "--out", str(out)]) == 2)
+
+    # the security stage: scanners run by code, before any model; nothing they decide comes from the change
+    sec_out = pathlib.Path(d) / "sec-cache"
+    def run_sec(commit_sha, base_sha, *extra):
+        with tempfile.TemporaryDirectory() as o:
+            code = quiet(v.main, [str(repo), "--commit", commit_sha, "--base", base_sha, "--out", o, "--timeout", "60", *extra])
+            runs = [json.loads(p.read_text()) for p in pathlib.Path(o).glob("site/*/summary.json")]
+            return code, (runs[0] if runs else None)
+    pkg = {"package.json": json.dumps({"scripts": {"test": "node -e \"process.exit(0)\""}})}
+    s0 = commit(repo, {**pkg, "public/_headers": "/*\n  Content-Security-Policy: script-src 'self'\n",
+                       "netlify/lib/old.mjs": "const a = 1; // FAKE_SAST already here\n"}, "security base")
+    sec = lambda summ, name: next(r for r in summ["checks"] if r["check"] == "security:" + name)
+    leak = commit(repo, {"netlify/lib/k.mjs": "const k = 'FAKE_SECRET_abc';\n"}, "a secret")
+    code, summ = run_sec(leak, s0)
+    check("a secret in the change fails verify with no model involved", code == 1 and sec(summ, "secrets")["status"] == "fail")
+    same = commit(repo, {"netlify/lib/old.mjs": "const a = 1; // FAKE_SAST already here\nconst b = 2;\n"}, "touch old")
+    code, summ = run_sec(same, leak)
+    check("a static finding the base already had is not new", sec(summ, "sast")["status"] == "pass")
+    code, summ = run_sec(same, leak, "--deep")
+    check("--deep reports every static finding, old ones too", sec(summ, "sast")["status"] == "hits" and summ["deep"])
+    new_sast = commit(repo, {"netlify/lib/n.mjs": "eval(x); // FAKE_SAST new\n"}, "new finding")
+    code, summ = run_sec(new_sast, same)
+    check("a new static finding goes to security-lead (exit 3, not a fail)", code == 3 and sec(summ, "sast")["status"] == "hits")
+    hide = commit(repo, {".semgrepignore": "netlify/\n", "netlify/lib/h.mjs": "eval(y); // FAKE_SAST hidden\n"}, "hide it")
+    code, summ = run_sec(hide, new_sast)
+    check("an ignore file in the change hides nothing", any(h["file"] == "netlify/lib/h.mjs" for h in sec(summ, "sast")["hits"]))
+    check("…and lights the tripwire as a suppression", any(h["why"] == "suppression" for h in summ["tripwire"]))
+    nosem = commit(repo, {"netlify/lib/q.mjs": "run(z); // nosemgrep\n"}, "inline suppression")
+    check("an inline suppression comment lights the tripwire", any(h["why"] == "suppression" for h in v.tripwire(repo, hide, nosem, None)))
+    weak = commit(repo, {"public/_headers": "/*\n  Content-Security-Policy: script-src 'self' 'unsafe-inline'\n"}, "weaker csp")
+    code, summ = run_sec(weak, nosem)
+    rules_hit = {h["rule"] for h in sec(summ, "headers")["hits"]}
+    check("a changed CSP and an unsafe one both reach security-lead", {"csp-changed", "csp-evaluator"} <= rules_hit)
+    shell = commit(repo, {"README.md": "read -rs NETLIFY_AUTH_TOKEN && export NETLIFY_AUTH_TOKEN\n"}, "token into the shell")
+    check("putting an account token into a shell lights the tripwire",
+          any(h["why"] == "secret_into_shell" for h in v.tripwire(repo, weak, shell, None)))
+    code, summ = run_sec(shell, weak)
+    check("the summary groups the tripwire by file", any(g["file"] == "README.md" for g in summ["tripwire_by_file"]))
+    allow = commit(repo, {"rnd/security/betterleaks-allow.toml": "# head's own allowlist\n[[allowlists]]\nregexes = ['FAKE']\n"}, "allowlist in head")
+    with tempfile.TemporaryDirectory() as w:
+        r = v.security.secrets(repo, shell, allow, False, pathlib.Path(w), v.EMPTY_TREE)
+        cfg_text = (pathlib.Path(w) / "betterleaks.toml").read_text()
+    check("a project allowlist is read from the base, not from the change", "head's own allowlist" not in cfg_text)
+    # a tool that changed on disk is not run, verify blocks, and the result is never reused
+    blp = FAKE / "tools/bl/betterleaks"
+    orig = blp.read_text()
+    blp.write_text(orig + "# tampered\n")
+    code, summ = run_sec(shell, weak)
+    check("a scanner that doesn't match its pinned sha256 is not run, and verify blocks (exit 2)",
+          code == 2 and sec(summ, "secrets")["status"] == "not run")
+    blp.write_text(orig)
+    with tempfile.TemporaryDirectory() as o:
+        blp.write_text(orig + "# tampered\n")
+        quiet(v.main, [str(repo), "--commit", shell, "--base", weak, "--out", o, "--timeout", "60"])
+        blp.write_text(orig)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+            v.main([str(repo), "--commit", shell, "--base", weak, "--out", o, "--timeout", "60"])
+    check("a run where a scanner didn't run is not reused", "reused" not in buf.getvalue())
+
+# our own rules against their fixture, with the real pinned opengrep when this machine has it
+real_og = pathlib.Path.home() / ".business-os/tools/opengrep-1.30.0/opengrep"
+if real_og.exists():
+    fixture = ROOT / "plugins/rnd-os/skills/verify/security/rules/tests/cases.mjs"
+    rules_file = ROOT / "plugins/rnd-os/skills/verify/security/rules/bos-node.yaml"
+    out_ = subprocess.run([str(real_og), "scan", "--quiet", "--json", "--disable-version-check", "-f", str(rules_file), str(fixture)],
+                          capture_output=True, text=True)
+    got = {(x["check_id"].split(".")[-1], x["start"]["line"]) for x in json.loads(out_.stdout)["results"]}
+    lines = fixture.read_text().splitlines()
+    want, quiet_ = set(), set()
+    for i, line in enumerate(lines):
+        for tag, bucket in (("// ruleid:", want), ("// ok:", quiet_)):
+            if line.strip().startswith(tag):
+                target = next(k for k in range(i + 1, len(lines)) if not lines[k].strip().startswith("//")) + 1
+                bucket.update((r.strip(), target) for r in line.split(":", 1)[1].split(","))
+    check("every own rule reports its fixture line", want <= got)
+    check("…and stays quiet where it must", not (quiet_ & got))
+else:
+    print("skip own-rule fixture: the pinned opengrep is not installed (security.py install)")
 
 print(f"\n{len(failures)} failed" if failures else "\nall passed")
 sys.exit(1 if failures else 0)

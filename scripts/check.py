@@ -14,6 +14,8 @@
    carries them: the review rules in every department head, the verdict line and blocking label
    in every reviewer — and the reviewers are exactly the set skills/ledger/report.py checks
    (BOS-49 C9/C10). A section edited in one agent only would quietly split the rules.
+5. Every agent anchor (scripts/agent-anchors.txt, "<file> | <phrase>") is still in its agent file — HEAD's
+   list and the new one together, as for the persona. It pins the rnd-os security veto (6.10.2026).
 
 Usage: check.py [--staged] [--persona FILE]
   --staged   check what is being committed (the git index), not the working tree
@@ -109,6 +111,35 @@ def check_persona(persona_text, anchors_text=None, base_text=None, approved_text
     seen = {norm(a) for a in new}
     union = new + [a for a in dict.fromkeys(parse(base_text)) if norm(a) not in seen and norm(a) not in ok]
     fails += [f"persona: gate anchor missing: {a}" for a in union if norm(a) not in body]
+    return fails
+
+
+def agent_anchor_pairs(text):
+    out = []
+    for line in parse(text):
+        if "|" in line:
+            f, phrase = (x.strip() for x in line.split("|", 1))
+            out.append((f, phrase))
+    return out
+
+
+def check_agent_anchors(anchors_text, base_text="", approved_text="", read=None):
+    """Every pinned phrase is in its agent file; a pair in HEAD's list may leave only with the founder's OK."""
+    if read is None:
+        def read(rel):
+            path = ROOT / rel
+            return path.read_text(encoding="utf-8") if path.exists() else None
+    key = lambda pair: (pair[0], norm(pair[1]))
+    new = agent_anchor_pairs(anchors_text)
+    ok = {key(p) for p in agent_anchor_pairs(approved_text)}
+    have = {key(p) for p in new}
+    fails = [f"agents: anchor removed without the founder's recorded OK ({APPROVED}): {f} | {ph}"
+             for f, ph in agent_anchor_pairs(base_text) if key((f, ph)) not in have and key((f, ph)) not in ok]
+    union = list(dict.fromkeys(new + [p for p in agent_anchor_pairs(base_text) if key(p) not in ok]))
+    for f, ph in union:
+        body = read(f)
+        if body is None or norm(ph) not in norm(body):
+            fails.append(f"{f}: pinned sentence missing: {ph}")
     return fails
 
 
@@ -234,8 +265,11 @@ def main(argv):
     base = (git_show("HEAD:scripts/persona-anchors.txt") or "") + "\n" + trusted_text()
     approved = APPROVED.read_text(encoding="utf-8", errors="replace") if APPROVED.exists() else ""
     read = (lambda rel: git_show(f":{rel}")) if staged else None
+    agent_text = (read("scripts/agent-anchors.txt") if read else
+                  (ROOT / "scripts" / "agent-anchors.txt").read_text(encoding="utf-8")) or ""
     fails = (check_persona(persona, anchors_text, base, approved) + check_read_paths() + check_shared(read)
-             + check_frontmatter(read))
+             + check_frontmatter(read)
+             + check_agent_anchors(agent_text, git_show("HEAD:scripts/agent-anchors.txt") or "", approved, read))
     for f in fails:
         print(f"check: {f}", file=sys.stderr)
     return 1 if fails else 0

@@ -9,6 +9,8 @@
   so dropping a rule together with its anchor still fails. Removing a gate rule needs the founder's explicit OK in chat,
   recorded as a line in `~/.business-os/approved-anchor-removals.txt` — never add that line without it,
   and never delete or empty `trusted-anchors.txt` to get past a refusal. An approval is used up once synced.
+  `scripts/agent-anchors.txt` pins the rnd-os security veto in the agent files the same way (`<file> | <phrase>`,
+  HEAD's list + the new one; removal needs the same recorded OK).
 - **Every commit runs `scripts/check.py`** (via `scripts/git-hooks/pre-commit`, which also bumps
   plugin versions). Cloud sessions get the hooks from `.claude/settings.json` → `scripts/session-start.sh`.
   A commit here that bumps a plugin version is also pushed (post-commit).

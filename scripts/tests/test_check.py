@@ -94,5 +94,20 @@ def with_description(value):
 check("a well-formed quoted value with ': ' is fine", with_description('"ראש המחלקה: בודק"') == [])
 check("a quoted value broken by a quote inside it is caught", any("broken quoted value" in f for f in with_description('"חו"ל: x"')))
 check("a single-quoted value with a doubled quote is fine", with_description("'it''s: fine'") == [])
+# agent anchors: the rnd-os security veto is pinned in the agent files
+anchors_now = (ROOT / "scripts/agent-anchors.txt").read_text(encoding="utf-8")
+check("every pinned veto sentence is in its agent file", ck.check_agent_anchors(anchors_now, anchors_now) == [])
+sl = "plugins/rnd-os/agents/security-lead.md"
+sl_text = (ROOT / sl).read_text(encoding="utf-8")
+softened = sl_text.replace("אסור לדווח על בדיקה שלא הרצת.", "עדיף לא לדווח על בדיקה שלא הרצת.")
+read_soft = lambda rel: softened if rel == sl else (ROOT / rel).read_text(encoding="utf-8")
+check("softening a pinned veto sentence is caught", any("pinned sentence missing" in f for f in ck.check_agent_anchors(anchors_now, anchors_now, "", read_soft)))
+pair = next(l for l in anchors_now.splitlines() if l.startswith(sl) and "אסור לדווח" in l)
+dropped = anchors_now.replace(pair + "\n", "")
+fails = ck.check_agent_anchors(dropped, anchors_now, "", read_soft)
+check("dropping the sentence and its anchor together is still caught", any("removed without" in f for f in fails))
+check("…unless the founder's OK is recorded", ck.check_agent_anchors(dropped, anchors_now, pair + "\n", read_soft) == [])
+check("a line break inside a pinned sentence still matches",
+      ck.check_agent_anchors(anchors_now, anchors_now, "", lambda rel: sl_text.replace("אסור לדווח על", "אסור\nלדווח על") if rel == sl else (ROOT / rel).read_text(encoding="utf-8")) == [])
 print(f"\n{len(failures)} failed" if failures else "\nall passed")
 sys.exit(1 if failures else 0)

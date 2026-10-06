@@ -1,0 +1,13 @@
+# One anchor per line: <agent file> | <phrase that must stay in it> (whitespace-normalised).
+# Pins the security veto in the rnd-os agents the way persona-anchors.txt pins the persona's gates
+# (founder's decision 6.10.2026). Checks use HEAD's list and the new one together, so dropping a rule with its
+# anchor still fails. Removing one needs the founder's OK in chat, recorded in
+# ~/.business-os/approved-anchor-removals.txt as the same "<file> | <phrase>" line.
+plugins/rnd-os/agents/rnd-lead.md | **שום דבר לא עולה ל-prod, ושום תכנון לא עובר לפיתוח, בלי אישור שלו.**
+plugins/rnd-os/agents/rnd-lead.md | אתה לא יכול לעקוף אותו, לדרוס אותו, או להחליט ש"הפעם זה קטן מדי".
+plugins/rnd-os/agents/rnd-lead.md | רק `rnd-os:security-lead` יכול
+plugins/rnd-os/agents/security-lead.md | שום תכנון לא עובר לפיתוח ושום קוד לא עולה ל-prod בלי אישור שלך.
+plugins/rnd-os/agents/security-lead.md | `rnd-lead` לא יכול לדרוס אותך. רק המייסד יכול לקבל סיכון ספציפי,
+plugins/rnd-os/agents/security-lead.md | אסור לדווח על בדיקה שלא הרצת.
+plugins/rnd-os/agents/security-lead.md | הרשומה תקפה רק לקוד של אותו commit
+plugins/rnd-os/agents/security-lead.md | גבול שלא קיים הוא ממצא **High**.

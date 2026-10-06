@@ -1,0 +1,130 @@
+# rnd-os own rules for Node / Netlify Functions code (ours, MIT like the plugin). Request input, secrets and
+# credentials in ESM handlers. A project adds its own input helpers as rules in rnd/security/rules/*.yaml
+# (read from the base commit). parseJsonObject is shahut-site's body parser.
+rules:
+- id: bos-secret-in-response-or-log
+  message: A secret from the environment reaches a response or a log line. Send it nowhere a visitor or a log reader can see.
+  severity: ERROR
+  languages: [javascript, typescript]
+  mode: taint
+  pattern-sources:
+  - pattern-either:
+    - pattern: process.env.$X
+    - pattern: process.env[$X]
+    - pattern: Netlify.env.get(...)
+    - pattern: Deno.env.get(...)
+  pattern-sinks:
+  - pattern-either:
+    - pattern: new Response(...)
+    - pattern: Response.json(...)
+    - pattern: console.$LOG(...)
+- id: bos-request-to-fetch-url
+  message: Request input decides where the server sends a request (SSRF). Allow-list the host.
+  severity: ERROR
+  languages: [javascript, typescript]
+  mode: taint
+  pattern-sources:
+  - pattern-either:
+    - pattern: await $REQ.json()
+    - pattern: await $REQ.text()
+    - pattern: await $REQ.formData()
+    - pattern: new URL($REQ.url).searchParams
+    - pattern: $REQ.headers.get(...)
+    - pattern: $CTX.params
+    - pattern: $CTX.cookies.get(...)
+    - pattern: parseJsonObject(...)
+    - pattern: $REQ.body
+  pattern-sinks:
+  - patterns:
+    - pattern-inside: fetch($U, ...)
+    - focus-metavariable: $U
+- id: bos-request-to-filesystem
+  message: Request input picks a file path (path traversal). Map input to a fixed list of files.
+  severity: ERROR
+  languages: [javascript, typescript]
+  mode: taint
+  pattern-sources:
+  - pattern-either:
+    - pattern: await $REQ.json()
+    - pattern: await $REQ.text()
+    - pattern: await $REQ.formData()
+    - pattern: new URL($REQ.url).searchParams
+    - pattern: $REQ.headers.get(...)
+    - pattern: $CTX.params
+    - pattern: $CTX.cookies.get(...)
+    - pattern: parseJsonObject(...)
+    - pattern: $REQ.body
+  pattern-sinks:
+  - pattern-either:
+    - pattern: $FS.readFile($P, ...)
+    - pattern: $FS.readFileSync($P, ...)
+    - pattern: $FS.createReadStream($P, ...)
+    - pattern: $FS.writeFile($P, ...)
+    - pattern: path.join(...)
+    - pattern: path.resolve(...)
+    - pattern: join(...)
+    - pattern: resolve(...)
+- id: bos-request-to-code
+  message: Request input reaches code execution or a shell.
+  severity: ERROR
+  languages: [javascript, typescript]
+  mode: taint
+  pattern-sources:
+  - pattern-either:
+    - pattern: await $REQ.json()
+    - pattern: await $REQ.text()
+    - pattern: await $REQ.formData()
+    - pattern: new URL($REQ.url).searchParams
+    - pattern: $REQ.headers.get(...)
+    - pattern: $CTX.params
+    - pattern: $CTX.cookies.get(...)
+    - pattern: parseJsonObject(...)
+    - pattern: $REQ.body
+  pattern-sinks:
+  - pattern-either:
+    - pattern: eval(...)
+    - pattern: new Function(...)
+    - pattern: $CP.exec(...)
+    - pattern: $CP.execSync(...)
+    - pattern: exec(...)
+    - pattern: execSync(...)
+    - pattern: "spawn(..., {..., shell: true, ...})"
+- id: bos-dynamic-code
+  message: Code built at run time from a non-literal (eval / new Function). Data must never become code.
+  severity: ERROR
+  languages: [javascript, typescript]
+  patterns:
+  - pattern-either:
+    - pattern: eval($X)
+    - pattern: new Function(..., $X)
+    - pattern: Function(..., $X)
+  - pattern-not: eval("...")
+  - pattern-not: new Function(..., "...")
+- id: bos-credential-sent
+  message: A credential leaves this code in an Authorization header. Name the host and the credential, and check the credential belongs to that host and nothing more is sent.
+  severity: WARNING
+  languages: [javascript, typescript]
+  pattern-either:
+  - pattern: '$FETCH($URL, {..., headers: {..., Authorization: $V, ...}, ...})'
+  - pattern: '$FETCH($URL, {..., headers: {..., authorization: $V, ...}, ...})'
+  - pattern: '$FETCH($URL, {..., headers: {..., "Authorization": $V, ...}, ...})'
+  - pattern: $H.set("Authorization", $V)
+  - pattern: $H.set("authorization", $V)
+- id: bos-env-values-sent
+  message: A loop over the whole environment feeds a request that carries an Authorization header — every value that passes the filter is sent, secrets of other services included. Send only the one credential this host owns, picked by name.
+  severity: ERROR
+  languages: [javascript, typescript]
+  patterns:
+  - pattern-either:
+    - pattern: '$FETCH($URL, {..., headers: {..., Authorization: $V, ...}, ...})'
+    - pattern: '$FETCH($URL, {..., headers: {..., authorization: $V, ...}, ...})'
+  - pattern-either:
+    - pattern-inside: |
+        for (const $N of Object.keys($ENV)) { ... }
+        ...
+    - pattern-inside: |
+        for (const [$N, $W] of Object.entries($ENV)) { ... }
+        ...
+    - pattern-inside: |
+        for (const $N in $ENV) { ... }
+        ...

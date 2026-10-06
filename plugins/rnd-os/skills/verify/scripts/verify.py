@@ -37,9 +37,14 @@ import sys
 import tempfile
 import time
 
-VERSION = "2"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import security  # noqa: E402  (the scanners; scripts/security.py)
+
+VERSION = "3"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 CONFIG_PATH = "rnd/domains.json"
+SCANNER_FILES = {".semgrepignore", ".opengrepignore", ".gitleaksignore", ".betterleaksignore", ".gitleaks.toml",
+                 ".betterleaks.toml", "betterleaks-allow.toml"}
 ALL = "*"
 DEV_SCRIPTS = ("test", "test:browser")
 RELEASE_SCRIPTS = ("check:release", "check:deploy", "test:load", "test:stability")
@@ -57,6 +62,10 @@ REVIEWERS = {
 TRIP_PATTERNS = [
     ("env_read", re.compile(r"process\.env\b|Deno\.env|Netlify\.env|\.env\.get\(|os\.environ|getenv\(|import\.meta\.env")),
     ("secret_name", re.compile(r"\b[A-Z0-9_]*(TOKEN|SECRET|API_KEY|PASSWORD|PRIVATE_KEY|AUTH)[A-Z0-9_]*\b|\bBearer\b")),
+    # an account token put into a shell is what production-protection rates High (BOS-81 3a, 30.9.2026)
+    ("secret_into_shell", re.compile(r"\b(export|read\s+-\w+)\s+[A-Z0-9_]*(TOKEN|SECRET|API_KEY|PASSWORD|PRIVATE_KEY|AUTH)[A-Z0-9_]*\b")),
+    # a switched-off scanner: the change would decide what the tools see
+    ("suppression", re.compile(r"nosemgrep|nosec\b|gitleaks:allow|betterleaks:allow")),
     ("publish_instruction", re.compile(r"netlify(-cli)?(['\"]?@\S*)?\s+(deploy|api|env)|--prod\b|personal access token|טוקן", re.I)),
 ]
 URL = re.compile(r"https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
@@ -147,6 +156,9 @@ def tripwire(repo, base, head, config):
             current = line[6:] if line.startswith("+++ b/") else None
             if CONFIG_PATH in (current, old):  # the map decides who reviews and what lights this tripwire;
                 hits.append({"file": CONFIG_PATH, "why": "map_changed", "line": ""})  # deleting it counts too
+            name = (current or old or "").rsplit("/", 1)[-1]
+            if name in SCANNER_FILES:  # a file that tells a scanner what to skip
+                hits.append({"file": current or old, "why": "suppression", "line": ""})
             if current and any(glob_match(current, p) for p in ignore):
                 current = None
             if current and any(glob_match(current, p) for p in paths):
@@ -251,6 +263,22 @@ def cache_key(head, base, config_text, inputs):
     return h.hexdigest()[:16]
 
 
+def by_file(trip):
+    """The tripwire grouped by file: security-lead gives each file and each new host one line (spike 6.10.2026 —
+    186 single lines were waved through in one sentence, and a real Medium finding with them)."""
+    rank = {k: i for i, k in enumerate(("secret_into_shell", "suppression", "map_changed", "map_unreadable",
+                                         "new_host", "env_read", "publish_instruction", "secret_name", "path"))}
+    out = {}
+    for h in trip:
+        g = out.setdefault(h["file"], {"file": h["file"], "kinds": {}, "first": {}})
+        g["kinds"][h["why"]] = g["kinds"].get(h["why"], 0) + 1
+        if h["line"]:
+            g["first"].setdefault(h["why"].split(" ")[0], h["line"])
+    for g in out.values():  # one sample per kind, the rarer and sharper kinds first
+        g["samples"] = [line for _, line in sorted(g.pop("first").items(), key=lambda kv: rank.get(kv[0], 99))][:3]
+    return list(out.values())
+
+
 def summary_md(s):
     lines = [f"# verify — {s['repo']} @ {s['head'][:12]}", "",
              f"- בסיס: `{s['base'][:12]}` ({s['base_source']}) · מצב: {'שחרור' if s['release'] else 'סבב'} · {s['time']}",
@@ -261,13 +289,30 @@ def summary_md(s):
         lines.append(f"- קבצים לא ממופים (נחשבים כל התחומים): {', '.join(s['map']['unmapped'][:20])}")
     lines += ["", "## חוט מעידה אבטחה", ""]
     if s["tripwire"]:
-        lines.append("**נדלק** — `security-lead` על ה-diff הזה לפני שמשהו רץ עם סוד או חשבון אמיתי:")
-        lines += [f"- `{h['file']}` — {h['why']}" + (f": `{h['line']}`" if h["line"] else "") for h in s["tripwire"][:40]]
+        lines.append("**נדלק** — `security-lead` על ה-diff הזה לפני שמשהו רץ עם סוד או חשבון אמיתי. שורת הכרעה לכל קובץ ולכל"
+                     " כתובת חדשה:")
+        for g in s.get("tripwire_by_file") or by_file(s["tripwire"]):
+            kinds = ", ".join(f"{k}×{n}" if n > 1 else k for k, n in g["kinds"].items())
+            lines.append(f"- `{g['file']}` — {kinds}" + (f": `{g['samples'][0]}`" if g["samples"] else ""))
+        if s.get("new_hosts"):
+            lines.append(f"- כתובות חדשות: {', '.join(s['new_hosts'])}")
     else:
         lines.append("לא נדלק.")
+    sec = [r for r in s["checks"] if r["check"].startswith("security:")]
+    if sec:
+        lines += ["", "## סורקי אבטחה" + (" (מעמיק: כל ההיסטוריה וכל הממצאים)" if s.get("deep") else ""), ""]
+        for r in sec:
+            lines.append(f"- **{r['check'].split(':')[1]}** — {r['status']}: {r.get('why', '')}")
+            for h in r.get("hits", [])[:30]:
+                where = f"`{h.get('file')}:{h.get('line')}`" if h.get("line") else f"`{h.get('file')}`"
+                sev = " **[ERROR]**" if h.get("severity") == "ERROR" else ""
+                lines.append(f"  - {h.get('rule')}{sev} {where} {h.get('msg') or h.get('after') or h.get('why') or ''}".rstrip())
+            if r.get("parse_gaps"):
+                lines.append(f"  - קבצים שהסורק לא קרא עד הסוף (המודל קורא): {', '.join(r['parse_gaps'])}")
     lines += ["", "## בדיקות", "", "| בדיקה | תוצאה | שניות | לוג |", "|---|---|---|---|"]
     for r in s["checks"]:
-        lines.append(f"| {r['check']} | {r['status']} | {r.get('seconds', '')} | {r.get('log', r.get('why', ''))} |")
+        if not r["check"].startswith("security:"):
+            lines.append(f"| {r['check']} | {r['status']} | {r.get('seconds', '')} | {r.get('log', r.get('why', ''))} |")
     return "\n".join(lines) + "\n"
 
 
@@ -283,6 +328,8 @@ def main(argv=None):
     ap.add_argument("--approved", action="append", default=[], help="drafts file with ```approved id=…``` blocks (legal); part of the key")
     ap.add_argument("--legal-dir", help="the venture's legal folder: the approved-text check reads which rulings are in force")
     ap.add_argument("--map-only", action="store_true")
+    ap.add_argument("--deep", action="store_true",
+                    help="the founder's full security check: every secret in the history and every static finding, not only new ones")
     ap.add_argument("--domains", help="a domains.json to use instead of the one in the commit (replays, repos not set up yet)")
     ap.add_argument("--timeout", type=int, default=1200)
     ap.add_argument("--out", default=str(pathlib.Path.home() / ".cache" / "business-os" / "verify"))
@@ -320,7 +367,8 @@ def main(argv=None):
         role = "A:" + "\0".join(sorted(a.approved)) + "L:" + (a.legal_dir or "")  # --input F and --approved F differ
         if a.legal_dir:
             a.input += [str(p) for p in sorted(pathlib.Path(a.legal_dir).glob("00 - *.md"))]
-        key = cache_key(head, base, config_text + ("R" if a.release else "") + ("M" if a.map_only else "") + role, a.input)
+        key = cache_key(head, base, config_text + ("R" if a.release else "") + ("M" if a.map_only else "")
+                        + ("D" if a.deep else "") + role + "T:" + security.fingerprint_of_tools(), a.input)
     except (OSError, ValueError) as e:
         print(f"verify: could not read an input — {e}", file=sys.stderr)
         return 2
@@ -334,7 +382,8 @@ def main(argv=None):
     if prev.exists():
         s = json.loads(prev.read_text())
         have = {r["check"] for r in s["checks"]}
-        if wanted <= have and all(r["status"] in ("pass", "not run") for r in s["checks"]):
+        if wanted <= have and all(r["status"] in ("pass", "not run", "hits") for r in s["checks"]) \
+                and not any(r["check"].startswith("security:") and r["status"] == "not run" for r in s["checks"]):
             print(f"verify: reused {out}/summary.md")
             return exit_code(s, a.map_only)
     map_ = change_map(repo, base, head, config)
@@ -343,7 +392,18 @@ def main(argv=None):
     if not a.map_only:
         with tempfile.TemporaryDirectory(prefix="verify-") as tmp:
             try:
-                checks = run_scripts(repo, head, scripts, a.timeout, pathlib.Path(tmp))
+                # the scanners first, on their own clean copies, before any of the change's code runs
+                sec = pathlib.Path(tmp) / "sec"
+                (sec / "src").mkdir(parents=True)
+                extract(repo, head, sec / "src")
+                sec_base = None
+                if base != EMPTY_TREE:
+                    sec_base = sec / "base"
+                    sec_base.mkdir()
+                    extract(repo, base, sec_base)
+                checks = security.run(repo, base, head, sec / "src", sec_base, a.deep or a.release, sec, EMPTY_TREE,
+                                      sast_full=a.deep)
+                checks += run_scripts(repo, head, scripts, a.timeout, pathlib.Path(tmp))
                 if a.approved and (moved := pages_dir_moved(config, head_config)):
                     checks.append({"check": "approved-text", "status": "fail", "why": moved})
                 elif a.approved:
@@ -365,7 +425,10 @@ def main(argv=None):
                     r["log"] = str(dest)
     s = {"repo": repo.name, "head": head, "base": base, "base_source": base_source, "release": a.release,
          "time": datetime.datetime.now().isoformat(timespec="seconds"), "version": VERSION,
-         "map_source": map_source, "map": map_, "tripwire": trip, "checks": checks, "inputs": a.input}
+         "deep": a.deep, "map_source": map_source, "map": map_, "tripwire": trip,
+         "tripwire_by_file": by_file(trip), "new_hosts": sorted({h["why"].split(" ", 1)[1] for h in trip
+                                                                   if h["why"].startswith("new_host")}),
+         "checks": checks, "inputs": a.input}
     out.mkdir(parents=True, exist_ok=True)
     (out / "summary.json").write_text(json.dumps(s, ensure_ascii=False, indent=1))
     (out / "summary.md").write_text(summary_md(s), encoding="utf-8")
@@ -380,9 +443,11 @@ def exit_code(s, map_only):
     checks = s["checks"]
     if any(r["status"] == "fail" for r in checks):
         return 1
-    if not map_only and not any(r["status"] == "pass" for r in checks):
-        return 2
-    return 3 if s["tripwire"] else 0
+    if any(r["check"].startswith("security:") and r["status"] == "not run" for r in checks):
+        return 2  # a security check that didn't run never passes
+    if not map_only and not any(r["status"] == "pass" and not r["check"].startswith("security:") for r in checks):
+        return 2  # the scanners alone don't make "the code was checked"
+    return 3 if s["tripwire"] or any(r["status"] == "hits" for r in checks) else 0
 
 
 if __name__ == "__main__":
