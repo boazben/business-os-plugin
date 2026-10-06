@@ -128,6 +128,38 @@ with tempfile.TemporaryDirectory() as d:
     check("a publish instruction lights it", any(h["why"] == "publish_instruction" for h in v.tripwire(repo, lnk, rd, cfg)))
     check("no change between base and head → exit 2, not an empty map", quiet(v.main, [str(repo), "--commit", rd, "--base", rd, "--map-only"]) == 2)
 
+    # a change can't switch off its own tripwire: the map is read from the base commit, and a new map is itself a hit
+    quiet_cfg = dict(CONFIG, tripwire_paths=[], tripwire_ignore=["netlify/**"])
+    silence = commit(repo, {"rnd/domains.json": json.dumps(quiet_cfg),
+                            "netlify/functions/notify.mjs": "export default () => process.env.NOTIFY_SECRET;\n"}, "silence")
+    with tempfile.TemporaryDirectory() as o:
+        code = quiet(v.main, [str(repo), "--commit", silence, "--base", rd, "--map-only", "--out", o])
+        s_ = json.loads(next(pathlib.Path(o).glob("site/*/summary.json")).read_text())
+    whys = {h["why"] for h in s_["tripwire"]}
+    check("a commit that edits the map is still judged by the base map", {"path", "env_read"} <= whys and code == 3)
+    check("a changed map lights the tripwire itself", "map_changed" in whys)
+    sh(repo, "rm", "-q", "rnd/domains.json")
+    sh(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "drop the map")
+    gone = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    check("deleting the map lights the tripwire", any(h["why"] == "map_changed" for h in v.tripwire(repo, silence, gone, cfg)))
+    bad = commit(repo, {"rnd/domains.json": "{bad"}, "bad map")
+    with tempfile.TemporaryDirectory() as o:
+        check("a malformed map in the head fails the run that adds it",
+              quiet(v.main, [str(repo), "--commit", bad, "--base", gone, "--map-only", "--out", o]) == 2)
+    fixed = commit(repo, {"rnd/domains.json": json.dumps(CONFIG)}, "fix map")
+    with tempfile.TemporaryDirectory() as o:
+        code = quiet(v.main, [str(repo), "--commit", fixed, "--base", bad, "--map-only", "--out", o])
+        s_ = json.loads(next(pathlib.Path(o).glob("site/*/summary.json")).read_text())
+    check("a malformed base map doesn't lock the fix out: every domain, and a hit", code == 3
+          and any(h["why"] == "map_unreadable" for h in s_["tripwire"]))
+    check("the summary says which map judged the change", s_.get("map_source", "").startswith(bad[:12]))
+    env_line = commit(repo, {"README.md": "npx netlify-cli@27 env:set A b\n"}, "pinned env instruction")
+    check("a commit can't move pages_dir to a decoy folder", v.pages_dir_moved(CONFIG, dict(CONFIG, pages_dir="decoy")) is not None)
+    check("pages_dir unchanged → no objection", v.pages_dir_moved(CONFIG, dict(CONFIG)) is None)
+    check("a first map can't point pages_dir at a decoy", v.pages_dir_moved(None, dict(CONFIG, pages_dir="decoy")) is not None)
+    check("a first map with the default pages_dir is fine", v.pages_dir_moved(None, dict(CONFIG)) is None)
+    check("a pinned publish instruction lights it", any(h["why"] == "publish_instruction" for h in v.tripwire(repo, fixed, env_line, cfg)))
+
     # first matching rule wins: the generator is customer text, not the netlify/** server rule
     check("first rule wins", v.domains_of("netlify/lib/content/gen/x.mjs", cfg) == {"code", "customer_text"})
     check("no config → every domain", v.domains_of("anything", None) == {v.ALL})
@@ -215,6 +247,12 @@ with tempfile.TemporaryDirectory() as d:
     mine = [r for r in mine if r["head"] == ok_page and any(c["check"] == "approved-text" for c in r["checks"])]
     check("verify --approved --legal-dir records approved-text as pass", code in (0, 3) and mine and
           any(c["check"] == "approved-text" and c["status"] == "pass" for c in mine[0]["checks"]))
+    claim = commit(repo, {"public/terms.html": "<p>איסוף עצמי בתיאום מראש, בלי דמי משלוח.</p><p>טענה שלא אושרה.</p>"}, "claim")
+    with tempfile.TemporaryDirectory() as o:
+        quiet(v.main, [str(repo), "--commit", claim, "--release", "--approved", str(drafts), "--legal-dir", str(legal), "--out", o, "--timeout", "60"])
+        s_ = json.loads(next(pathlib.Path(o).glob("site/*/summary.json")).read_text())
+    at_ = next(c for c in s_["checks"] if c["check"] == "approved-text")
+    check("live commit unknown → every line is new → unapproved text fails", at_["status"] == "fail" and "טענה שלא אושרה" in at_["why"])
     empty = commit(repo, {"package.json": json.dumps({"scripts": {}})}, "no scripts")
     check("no check ran → exit 2, not 0", quiet(v.main, [str(repo), "--commit", empty, "--base", ok_page, "--out", str(out)]) == 2)
 

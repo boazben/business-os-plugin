@@ -64,12 +64,18 @@ OPT_VALUE = r"(\s+[^\s;&|-]\S*)?"
 GH_API_WRITE = (r"\bgh\s+api\b(?=[^;&|\n]*(-X\s*(POST|PUT|PATCH|DELETE)\b|--method[=\s]+(POST|PUT|PATCH|DELETE)\b"
                 r"|\s-[fF]|\s--(raw-)?field\b|\s--input\b))")
 
+# The Netlify CLI under any name, also with a pinned version as npx/pnpm dlx run it (`netlify-cli@27.10.0`,
+# `'netlify-cli@^27'`, `netlify-cli@"^27"`) and with global flags before the subcommand (`netlify --debug deploy`,
+# `netlify --auth $T deploy`). Without the version part a pinned command slipped past every rule (F-1, 30.9.2026).
+# The name is a command word: `--grep=netlify deploy.md` is not the CLI.
+NETLIFY_CLI = r"(?<![\w=.-])(netlify|netlify-cli|ntl)(['\"]?@[^\s;&|]*)?(\s+--?[\w-]+((=|\s+)[^\s;&|-]\S*)?)*\s+"
+
 DEPLOY_PATTERNS = [re.compile(p, re.I) for p in (
     r"\bvercel\b[^;&|\n]*\s--(prod|target[=\s]+production)\b",
     r"\bvercel\s+(promote|alias|rollback|rolling-release)\b",
     # Netlify publish: a --prod CLI deploy, publishing an already-built deploy through the API, or
     # unlocking auto publishing (every later merge would go live without asking).
-    r"\b(netlify|netlify-cli|ntl)\s+(deploy\b[^;&|\n]*\s--(prod|prod-if-unlocked)\b|unlock\b"
+    NETLIFY_CLI + r"(deploy\b[^;&|\n]*\s--(prod|prod-if-unlocked)\b|unlock\b"
     r"|api\s+(restoreSiteDeploy|unlockDeploy)\b)",
     r"\b(fly|flyctl)\s+deploy\b",
     r"\bwrangler\s+(deploy|publish|pages\s+deploy|versions\s+deploy)\b",
@@ -111,9 +117,9 @@ HOSTING_CONTROL_PATTERNS = [re.compile(p, re.I) for p in (
     r"\bvercel\s+(env\s+(add|rm|remove)|project\s+(rm|remove)|teams)\b",
     # Netlify: the founder let Claude manage settings (17.9.2026); publishing goes through Rule 1.
     # Still never Claude's: a draft deploy (its URL skips the pre-live review), secrets, and deleting.
-    r"\b(netlify|netlify-cli|ntl)\s+(deploy\b(?![^;&|\n]*--prod)|build\s+--deploy"
+    NETLIFY_CLI + r"(deploy\b(?![^;&|\n]*--prod)|build\s+--deploy"
     r"|env:(set|unset|import|clone)|sites:delete)\b",
-    r"\b(netlify|netlify-cli|ntl)\s+api\s+(createSiteDeploy|createEnvVars|setEnvVarValue|updateEnvVar"
+    NETLIFY_CLI + r"api\s+(createSiteDeploy|createEnvVars|setEnvVarValue|updateEnvVar"
     r"|deleteEnvVar|deleteEnvVarValue|deleteSite|deleteDeploy|deleteSiteDeploy)\b",
     r"\bgit\b(\s+-c\s*|[^;&|\n]*\bconfig\b[^;&|\n]*\s)alias\.",
 )]

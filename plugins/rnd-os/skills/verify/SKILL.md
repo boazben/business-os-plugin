@@ -14,7 +14,7 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/verify.py <repo> --commit <sha> --release --
 |---|---|
 | `--commit` | ה-commit שנבדק. תמיד sha מלא כשהתוצאה הולכת לבודקים |
 | `--base` | מול מה משווים: בסבב — ה-sha שהבודקים ראו קודם; ברירת מחדל `main` |
-| `--release` | שחרור: הבסיס הוא מה שבאוויר (`--live-sha`, או `--netlify-site <id>` שקורא את ה-sha מכותרת הפרסום). לא ידוע → כל העץ נחשב שינוי |
+| `--release` | שחרור: הבסיס הוא מה שבאוויר (`--live-sha`, או `--netlify-site <id>` שקורא את ה-sha מכותרת הפרסום). לא ידוע → כל העץ נחשב שינוי, בלי מפה, ובדיקת הנוסח דורשת שכל טקסט באתר יהיה בתוך נוסח מאושר (תיכשל — זה מכוון; תנו את ה-sha שבאוויר) |
 | `--input <file>` | קובץ חיצוני שבדיקה קוראת (פסיקה, נוסח מאושר) — נכנס למפתח, כך ששינוי בו מריץ מחדש |
 | `--map-only` | רק מפה וחוט מעידה, בלי להריץ בדיקות |
 
@@ -28,7 +28,8 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/verify.py <repo> --commit <sha> --release --
 
 - **הבדיקות** — הסקריפטים ב-`package.json`: `test`, `test:browser`; בשחרור גם `check:release`, `check:deploy`,
   `test:load`, `test:stability`. סקריפט שלא קיים — `not run`, לא "עבר".
-- **המפה** — `rnd/domains.json` בריפו:
+- **המפה** — `rnd/domains.json` בריפו, **כפי שהוא ב-commit הבסיס**: שינוי לא כותב את המפה שלפיה הוא נבדק. מפה
+  ששונתה מדליקה בעצמה את חוט המעידה (`map_changed`), והמפה החדשה חלה מהשינוי הבא:
 
 ```json
 {

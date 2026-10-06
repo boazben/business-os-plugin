@@ -2,8 +2,9 @@
 """rnd-os:verify — every check runs once per version, and every reviewer reads the same results.
 
 Runs on a clean copy of one commit (git archive), never on the working tree:
-  1. change map   — which domains the change base..head touches (rnd/domains.json in the repo; an
-                    unmapped file counts as every domain), and the reviewers that suggests
+  1. change map   — which domains the change base..head touches (rnd/domains.json at the BASE commit, so
+                    a change can't rewrite the map it is judged by; an unmapped file counts as every
+                    domain), and the reviewers that suggests. A changed map lights the tripwire.
   2. tripwire     — added lines that touch secrets or the outside world (env reads, token names, new
                     hosts, server/config paths, publish/token instructions) → security-lead now
   3. checks       — the project's own package.json scripts (test, test:browser; with --release also
@@ -36,8 +37,9 @@ import sys
 import tempfile
 import time
 
-VERSION = "1"
+VERSION = "2"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+CONFIG_PATH = "rnd/domains.json"
 ALL = "*"
 DEV_SCRIPTS = ("test", "test:browser")
 RELEASE_SCRIPTS = ("check:release", "check:deploy", "test:load", "test:stability")
@@ -55,7 +57,7 @@ REVIEWERS = {
 TRIP_PATTERNS = [
     ("env_read", re.compile(r"process\.env\b|Deno\.env|Netlify\.env|\.env\.get\(|os\.environ|getenv\(|import\.meta\.env")),
     ("secret_name", re.compile(r"\b[A-Z0-9_]*(TOKEN|SECRET|API_KEY|PASSWORD|PRIVATE_KEY|AUTH)[A-Z0-9_]*\b|\bBearer\b")),
-    ("publish_instruction", re.compile(r"netlify(-cli)?\s+(deploy|api|env)|--prod\b|personal access token|טוקן", re.I)),
+    ("publish_instruction", re.compile(r"netlify(-cli)?(['\"]?@\S*)?\s+(deploy|api|env)|--prod\b|personal access token|טוקן", re.I)),
 ]
 URL = re.compile(r"https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
 # a URL counts as "the code sends there" only in code; a link in page text is the legal reviewers' business
@@ -75,11 +77,24 @@ def resolve(repo, ref):
 
 
 def load_config(repo, sha):
-    """rnd/domains.json at that commit. Missing → None (every file is unmapped, so every domain)."""
-    r = subprocess.run(["git", "-C", str(repo), "show", f"{sha}:rnd/domains.json"], capture_output=True, text=True)
+    """rnd/domains.json at that commit. Missing → None (every file is unmapped, so every domain).
+    main() reads it at the BASE commit: a change must not write the map it is judged by."""
+    r = subprocess.run(["git", "-C", str(repo), "show", f"{sha}:{CONFIG_PATH}"], capture_output=True, text=True)
     if r.returncode:
         return None
     return json.loads(r.stdout)
+
+
+def pages_dir_moved(base_config, head_config):
+    """The wording check reads the pages where the BASE map says they are: a change that points pages_dir at
+    another folder would choose what legal's check sees. A move fails the check until both folders are compared."""
+    if head_config is None:
+        return None
+    if base_config is None:  # the first map, or none readable at the base: only the default is trusted
+        after = head_config.get("pages_dir", "public")
+        return None if after == "public" else f"pages_dir set to {after} by this commit, with no map at the base — check the text where the pages really are"
+    before, after = base_config.get("pages_dir", "public"), head_config.get("pages_dir", "public")
+    return None if before == after else f"pages_dir changed in this commit ({before} → {after}) — check the text in both folders"
 
 
 def glob_match(path, pattern):
@@ -123,10 +138,15 @@ def tripwire(repo, base, head, config):
     for line in diff.splitlines():
         if line.startswith("-") and not line.startswith("---"):
             removed_hosts |= set(URL.findall(line))
-    current = None
+    current = old = None
     for line in diff.splitlines():
+        if line.startswith("--- "):
+            old = line[6:] if line.startswith("--- a/") else None
+            continue
         if line.startswith("+++ "):
             current = line[6:] if line.startswith("+++ b/") else None
+            if CONFIG_PATH in (current, old):  # the map decides who reviews and what lights this tripwire;
+                hits.append({"file": CONFIG_PATH, "why": "map_changed", "line": ""})  # deleting it counts too
             if current and any(glob_match(current, p) for p in ignore):
                 current = None
             if current and any(glob_match(current, p) for p in paths):
@@ -234,6 +254,7 @@ def cache_key(head, base, config_text, inputs):
 def summary_md(s):
     lines = [f"# verify — {s['repo']} @ {s['head'][:12]}", "",
              f"- בסיס: `{s['base'][:12]}` ({s['base_source']}) · מצב: {'שחרור' if s['release'] else 'סבב'} · {s['time']}",
+             f"- המפה: `{s.get('map_source', '')}`",
              f"- תחומים שנגעו: {', '.join(s['map']['domains']) or 'אין'}",
              f"- בודקים מוצעים (המפה רק מוסיפה; ראש המחלקה מחליט): {', '.join(s['map']['reviewers']) or 'אין'}"]
     if s["map"]["unmapped"]:
@@ -280,7 +301,20 @@ def main(argv=None):
         print(f"verify: {e}", file=sys.stderr)
         return 2
     try:
-        config = json.loads(pathlib.Path(a.domains).read_text()) if a.domains else load_config(repo, head)
+        try:  # parsed so a broken map fails the change that brings it
+            head_config = load_config(repo, head)
+        except ValueError as e:
+            raise ValueError(f"{CONFIG_PATH} in {head[:12]} is not valid JSON ({e})") from e
+        map_source = a.domains or f"{base[:12]}:{CONFIG_PATH}"
+        map_hits = []
+        if a.domains:
+            config = json.loads(pathlib.Path(a.domains).read_text())
+        else:
+            try:
+                config = load_config(repo, base)
+            except ValueError:  # a broken map already merged must not lock out the change that fixes it
+                config, map_source = None, map_source + " (unreadable — every file counts as every domain)"
+                map_hits = [{"file": CONFIG_PATH, "why": "map_unreadable", "line": ""}]
         config_text = json.dumps(config, sort_keys=True) if config else ""
         a.input = a.input + [p for p in a.approved if p not in a.input]
         role = "A:" + "\0".join(sorted(a.approved)) + "L:" + (a.legal_dir or "")  # --input F and --approved F differ
@@ -304,19 +338,21 @@ def main(argv=None):
             print(f"verify: reused {out}/summary.md")
             return exit_code(s, a.map_only)
     map_ = change_map(repo, base, head, config)
-    trip = tripwire(repo, base, head, config)
+    trip = map_hits + tripwire(repo, base, head, config)
     checks = []
     if not a.map_only:
         with tempfile.TemporaryDirectory(prefix="verify-") as tmp:
             try:
                 checks = run_scripts(repo, head, scripts, a.timeout, pathlib.Path(tmp))
-                if a.approved:
-                    pages_dir = (config or {}).get("pages_dir", "public")
-                    base_pages = None
-                    if base != EMPTY_TREE:  # unknown base → no base pages → all text is new → uncovered → fail
-                        (pathlib.Path(tmp) / "base").mkdir()
+                if a.approved and (moved := pages_dir_moved(config, head_config)):
+                    checks.append({"check": "approved-text", "status": "fail", "why": moved})
+                elif a.approved:
+                    pages_dir = (config or {}).get("pages_dir", "public")  # head may only keep the default
+                    # unknown base → an empty base folder: all text is new, so every line must sit inside a block
+                    (pathlib.Path(tmp) / "base").mkdir()
+                    if base != EMPTY_TREE:
                         extract(repo, base, pathlib.Path(tmp) / "base")
-                        base_pages = pathlib.Path(tmp) / "base" / pages_dir
+                    base_pages = pathlib.Path(tmp) / "base" / pages_dir
                     checks.append(approved_check(pathlib.Path(tmp) / "src" / pages_dir, a.approved, a.legal_dir, base_pages))
             except (RuntimeError, OSError, subprocess.CalledProcessError, ValueError) as e:
                 print(f"verify: could not run — {e}", file=sys.stderr)
@@ -329,7 +365,7 @@ def main(argv=None):
                     r["log"] = str(dest)
     s = {"repo": repo.name, "head": head, "base": base, "base_source": base_source, "release": a.release,
          "time": datetime.datetime.now().isoformat(timespec="seconds"), "version": VERSION,
-         "map": map_, "tripwire": trip, "checks": checks, "inputs": a.input}
+         "map_source": map_source, "map": map_, "tripwire": trip, "checks": checks, "inputs": a.input}
     out.mkdir(parents=True, exist_ok=True)
     (out / "summary.json").write_text(json.dumps(s, ensure_ascii=False, indent=1))
     (out / "summary.md").write_text(summary_md(s), encoding="utf-8")

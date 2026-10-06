@@ -194,6 +194,22 @@ def main(root):
         ("netlify-cli through npx", "npx netlify-cli deploy --prod", DEPLOY),
         ("netlify unlock auto publishing", "ntl unlock", DEPLOY),
         ("netlify api unlock a deploy", "netlify api unlockDeploy --data '{\"deploy_id\":\"y\"}'", DEPLOY),
+        # F-1/F-2 (30.9.2026): a pinned CLI version, as the site README runs it, slipped past every pattern.
+        ("pinned netlify-cli, the README command", "npx netlify-cli@27.10.0 deploy --prod --no-build --dir .", DEPLOY),
+        ("pinned netlify-cli with npx --yes", "npx --yes netlify-cli@latest deploy --prod", DEPLOY),
+        ("pinned netlify-cli with npx -y", "npx -y netlify-cli@27 deploy --prod", DEPLOY),
+        ("pinned netlify-cli, quoted range", "npx 'netlify-cli@^27' deploy --prod", DEPLOY),
+        ("pinned netlify-cli through pnpm dlx", "pnpm dlx netlify-cli@27.10.0 deploy --prod", DEPLOY),
+        ("pinned netlify-cli prod-if-unlocked", "npx netlify-cli@27.10.0 deploy --prod-if-unlocked", DEPLOY),
+        ("pinned netlify-cli unlock", "npx netlify-cli@17 unlock", DEPLOY),
+        ("pinned netlify-cli api unlockDeploy", "npx netlify-cli@27.10.0 api unlockDeploy --data '{}'", DEPLOY),
+        ("version quoted after the @", "npx netlify-cli@'27.10.0' deploy --prod", DEPLOY),
+        ("range quoted after the @", "npx netlify-cli@\"^27\" deploy --prod", DEPLOY),
+        ("name quoted before the @", "npx 'netlify-cli'@27 deploy --prod", DEPLOY),
+        ("quoted name, no version", "npx \"netlify-cli\" deploy --prod", DEPLOY),
+        ("a global flag before the subcommand", "netlify --debug deploy --prod", DEPLOY),
+        ("pinned, a global flag before the subcommand", "npx netlify-cli@27 --telemetry-disable deploy --prod", DEPLOY),
+        ("a global flag with a separate value", "netlify --auth $T deploy --prod", DEPLOY),
         ("gh api merge without sha", "gh api -X PUT repos/o/r/pulls/1/merge", PIN),
         ("push HEAD:refs/heads/main", "git push origin HEAD:refs/heads/main", PUSH),
         ("push HEAD:heads/main", "git push origin HEAD:heads/main", PUSH),
@@ -288,6 +304,11 @@ def main(root):
         ("netlify lock auto publishing", "netlify api lockDeploy --data '{\"deploy_id\":\"y\"}'"),
         ("netlify api changes site settings", "netlify api updateSite --data '{\"site_id\":\"x\"}'"),
         ("netlify env list", "netlify env:list"),
+        ("pinned netlify-cli status", "npx netlify-cli@27.10.0 status"),
+        ("searching for netlify in a deploy script", "grep -n \"netlify\" deploy.sh"),
+        ("searching for ntl in a deploy folder", "rg 'ntl' deploy"),
+        ("git log grep netlify on a deploy doc", "git log --grep=netlify --oneline deploy.md"),
+        ("pinned netlify-cli read-only api, as verify runs it", "npx --yes netlify-cli@27.10.0 api getSite --data '{\"site_id\":\"x\"}'"),
         ("disable GitHub Actions", "gh api -X PUT repos/o/r/actions/permissions -F enabled=false"),
     ):
         case(name, 0, bash(cmd, repo))
@@ -303,6 +324,7 @@ def main(root):
     approved = new_repo()
     approve(approved)
     case("approved commit deploys", 0, bash("vercel --prod", approved))
+    case("approved commit deploys with the pinned README command", 0, bash("npx netlify-cli@27.10.0 deploy --prod --no-build --dir .", approved))
     case("approved commit publishes an existing Netlify deploy", 0, bash("netlify api restoreSiteDeploy --data '{\"site_id\":\"x\",\"deploy_id\":\"y\"}'", approved))
     case("listing Netlify deploys is read-only", 0, bash("netlify api listSiteDeploys --data '{\"site_id\":\"x\"}'", repo))
     for name, cmd, reason in (
@@ -319,6 +341,11 @@ def main(root):
         ("netlify env set", "netlify env:set STRIPE_KEY sk_live", CONTROL),
         ("netlify api env write", "netlify api createEnvVars --data '{}'", CONTROL),
         ("netlify delete site", "netlify sites:delete abc", CONTROL),
+        ("pinned netlify-cli draft deploy", "npx netlify-cli@27.10.0 deploy --dir .", CONTROL),
+        ("pinned netlify-cli env set", "npx netlify-cli@27 env:set STRIPE_KEY sk_live", CONTROL),
+        ("pinned netlify-cli api env write", "npx --yes netlify-cli@27 api createEnvVars --data '{}'", CONTROL),
+        ("pinned netlify-cli draft deploy, a global flag first", "npx netlify-cli@27 --debug deploy --dir .", CONTROL),
+        ("draft deploy, a global flag with a separate value", "netlify --auth $T deploy --dir .", CONTROL),
         ("enable GitHub Actions", "gh api -X PUT repos/o/r/actions/permissions -F enabled=true", CONTROL),
         ("git alias hides a push", "git config alias.ship push", CONTROL),
         ("one-off git alias", "git -c alias.x=push x origin main", CONTROL),
