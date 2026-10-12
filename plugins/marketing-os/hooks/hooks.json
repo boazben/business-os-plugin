@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(mcp__.*__ads_.*|Write|Edit|MultiEdit|NotebookEdit|Bash|mcp__.*device_commit_files|mcp__.*device_bash)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/studio-gate.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

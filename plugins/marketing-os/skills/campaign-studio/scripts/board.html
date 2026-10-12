@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>סטודיו קמפיינים</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Secular+One&family=Assistant:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: sticky bar (back, name, theme, pack) over one column. Home lists campaigns by venture; a campaign is five
+   plain steps (what for, who, what we say, pick the ads, pack) with live ad previews. */
+:root {
+  --bg: #f3f5f4; --surface: #ffffff; --ink: #17221f; --muted: #5b6b66; --line: #d8dfdc;
+  --accent: #0f6b5c; --accent-ink: #ffffff; --accent-soft: #dcefe9;
+  --bad: #b3261e; --bad-soft: #fbe9e7; --warn: #8a5a00; --warn-soft: #fff4d6; --shade: rgba(0,0,0,.55);
+  --display: "Secular One", "Assistant", system-ui, sans-serif;
+  --body: "Assistant", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111816; --surface: #19221f; --ink: #e7eeeb; --muted: #9aaba5; --line: #2c3a36;
+  --accent: #4fc2a8; --accent-ink: #0d1412; --accent-soft: #1f3a33;
+  --bad: #ff8a80; --bad-soft: #3a1f1d; --warn: #f2c14e; --warn-soft: #33290f; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111816; --surface: #19221f; --ink: #e7eeeb; --muted: #9aaba5; --line: #2c3a36;
+  --accent: #4fc2a8; --accent-ink: #0d1412; --accent-soft: #1f3a33;
+  --bad: #ff8a80; --bad-soft: #3a1f1d; --warn: #f2c14e; --warn-soft: #33290f; color-scheme: dark }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.5; }
+h1, h2, h3 { font-family: var(--display); font-weight: 400; margin: 0; line-height: 1.2; text-wrap: balance; }
+h1 { font-size: 26px; } h2 { font-size: 21px; } h3 { font-size: 17px; }
+p { margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+input[type=text], input[type=number], input[type=url], input[type=date], textarea, select {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; width: 100%; }
+textarea { resize: vertical; min-height: 70px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+label { display: grid; gap: 4px; font-weight: 600; font-size: 14px; }
+.hint { font-weight: 400; color: var(--muted); font-size: 13px; }
+.warnline { color: var(--warn); font-size: 13px; font-weight: 600; }
+body.offline main input, body.offline main textarea, body.offline main select, body.offline main button { pointer-events: none; opacity: .55; }
+
+.bar { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line);
+  padding: 10px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.bar .name { font-family: var(--display); font-size: 21px; border: 0; background: transparent; padding: 2px 4px; flex: 1 1 200px; min-width: 0; width: auto; }
+.bar .title { font-family: var(--display); font-size: 21px; flex: 1 1 200px; }
+.pill { font-size: 13px; font-weight: 700; border-radius: 999px; padding: 2px 12px; white-space: nowrap; }
+.pill.draft { background: var(--warn-soft); color: var(--warn); }
+.pill.packed { background: var(--accent-soft); color: var(--accent); }
+.pill.live { background: var(--accent); color: var(--accent-ink); }
+.saved { font-size: 13px; color: var(--muted); min-width: 64px; }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 6px 14px; cursor: pointer; font-weight: 600; text-decoration: none; color: inherit; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:disabled { opacity: .45; cursor: not-allowed; }
+.btn.small { padding: 2px 10px; font-size: 13px; }
+.x { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; padding: 2px 6px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: transparent; padding: 6px 12px; cursor: pointer; }
+.seg button[aria-pressed=true] { background: var(--ink); color: var(--bg); }
+
+main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 80px; display: grid; gap: 20px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: grid; gap: 14px; min-width: 0; scroll-margin-top: 80px; }
+.panel > header { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+.stepno { font-family: var(--mono); font-size: 13px; color: var(--muted); margin-inline-end: 6px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.banner { border-radius: 12px; padding: 14px 18px; display: grid; gap: 6px; }
+.banner.ok { background: var(--accent-soft); }
+.banner.warn { background: var(--warn-soft); }
+.banner.bad { background: var(--bad-soft); }
+.banner .pre { white-space: pre-wrap; }
+.banner .row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.banner a { color: inherit; font-weight: 700; }
+
+.steps { display: flex; gap: 6px; flex-wrap: wrap; }
+.steps a { text-decoration: none; color: inherit; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 12px; font-size: 14px; display: inline-flex; gap: 6px; align-items: center; }
+.steps a.done { border-color: var(--accent); }
+.steps a.done::before { content: "✓"; color: var(--accent); font-weight: 700; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { display: inline-flex; gap: 4px; align-items: center; background: var(--accent-soft); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 14px; }
+.row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: start; }
+
+.angles { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.angle { border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.angle-head { display: flex; gap: 8px; align-items: center; }
+.angle-head input { font-family: var(--display); font-size: 17px; }
+.imgs { display: flex; flex-wrap: wrap; gap: 8px; }
+.thumb { position: relative; width: 84px; height: 84px; border-radius: 8px; overflow: hidden; background: var(--bg); border: 1px solid var(--line); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb .x { position: absolute; top: 2px; inset-inline-end: 2px; background: var(--shade); color: #fff; border-radius: 6px; font-size: 14px; }
+.add-img { width: 84px; height: 84px; border: 1px dashed var(--line); border-radius: 8px; display: grid; place-items: center; cursor: pointer; color: var(--muted); font-size: 13px; text-align: center; background: transparent; }
+.count { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.count.over { color: var(--warn); font-weight: 700; }
+
+.ads-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.ads { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+.ad { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.ad.keep .mock { box-shadow: 0 0 0 3px var(--accent); }
+.ad.drop { opacity: .4; }
+.mock { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 14px; }
+.mock .hd { display: flex; gap: 8px; align-items: center; padding: 8px 10px; }
+.av { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); flex: none; }
+.mock .txt { padding: 0 10px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.more { color: var(--muted); }
+.mock .pic { aspect-ratio: 1/1; background: var(--bg); }
+.mock .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mock .ft { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 8px 10px; background: var(--bg); }
+.mock .ft b { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cta { background: var(--line); border-radius: 6px; padding: 4px 10px; font-weight: 700; font-size: 12px; white-space: nowrap; }
+.story { position: relative; aspect-ratio: 9/16; border-radius: 12px; overflow: hidden; background: #222; }
+.story img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.story .sx { position: absolute; inset-inline: 0; bottom: 0; padding: 14px; display: grid; gap: 6px; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.72)); font-size: 13px; }
+.story .sx b { font-size: 16px; }
+.story .cta { background: #fff; color: #111; justify-self: center; }
+.story .top { position: absolute; top: 10px; inset-inline-start: 10px; display: flex; gap: 6px; align-items: center; color: #fff; font-size: 12px; text-shadow: 0 1px 2px #000; }
+.vote { display: flex; gap: 6px; }
+.vote button { flex: 1; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 6px; cursor: pointer; font-size: 16px; }
+.vote button[aria-pressed=true].k { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.vote button[aria-pressed=true].d { background: var(--bad-soft); border-color: var(--bad); }
+.ad .meta { font-size: 12px; color: var(--muted); }
+
+.checks ul { margin: 0; padding-inline-start: 20px; display: grid; gap: 4px; }
+.checks .e { color: var(--bad); } .checks .w { color: var(--warn); }
+.empty { color: var(--muted); padding: 22px; text-align: center; border: 1px dashed var(--line); border-radius: 10px; }
+
+.ventures { display: grid; gap: 22px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 8px; text-decoration: none; color: inherit; }
+.card:hover { border-color: var(--accent); }
+.card .meta { font-size: 13px; color: var(--muted); }
+@media (max-width: 520px) { .angles { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <a class="btn small" id="home-btn" href="#" hidden>→ כל הקמפיינים</a>
+  <span class="title" id="home-title">סטודיו קמפיינים</span>
+  <input class="name" id="f-name" type="text" aria-label="שם הקמפיין" placeholder="שם הקמפיין" data-path='["name"]' hidden>
+  <span class="pill draft" id="status" hidden>טיוטה</span>
+  <span class="saved" id="saved" aria-live="polite"></span>
+  <div class="seg" id="theme" role="group" aria-label="מראה">
+    <button type="button" data-v="auto" title="לפי המחשב">אוטו׳</button>
+    <button type="button" data-v="light" title="בהיר" aria-label="בהיר">☀️</button>
+    <button type="button" data-v="dark" title="כהה" aria-label="כהה">🌙</button>
+  </div>
+  <button class="btn primary" id="pack" type="button" hidden>ארוז לשליחה</button>
+</div>
+
+<main id="main">
+  <div class="banner bad" id="offline" hidden><b>הלוח לא מחובר.</b><span>שום שינוי לא נשמר כרגע. בקש מ-Claude: "תפעיל את לוח הקמפיינים", ורענן את הדף.</span></div>
+
+  <section id="home" hidden>
+    <div class="ventures" id="ventures"></div>
+  </section>
+
+  <div id="campaign" hidden style="display:grid;gap:20px">
+    <div class="banner ok" id="launched" hidden></div>
+    <div class="banner ok" id="packed-banner" hidden></div>
+    <div class="banner warn" id="review" hidden></div>
+    <div class="banner warn" id="conflicts" hidden></div>
+    <div class="banner bad" id="rejected" hidden></div>
+    <div class="banner warn" id="pending" hidden><span>שינויים מהשיחה נכנסים ללוח…</span></div>
+
+    <nav class="steps" id="steps" aria-label="שלבים"></nav>
+
+    <section class="panel" id="s-goal" aria-labelledby="h-goal">
+      <header><h2 id="h-goal"><span class="stepno">1</span>מה רוצים שיקרה</h2></header>
+      <div class="grid">
+        <label>המטרה
+          <select id="f-goal" data-path='["goal"]'>
+            <option value="traffic">שאנשים יגיעו לאתר</option>
+            <option value="awareness">שיכירו אותנו (כמה שיותר אנשים יראו)</option>
+          </select>
+        </label>
+        <label>לאן המודעה מובילה
+          <input id="f-link" type="url" placeholder="https://" dir="ltr" data-path='["link"]'>
+        </label>
+        <label>מה כתוב על הכפתור
+          <select id="f-cta" data-path='["cta"]'>
+            <option value="LEARN_MORE">למידע נוסף</option>
+            <option value="SIGN_UP">להרשמה</option>
+            <option value="SHOP_NOW">לקנייה</option>
+            <option value="BOOK_NOW">להזמנת מקום</option>
+            <option value="ORDER_NOW">להזמנה</option>
+            <option value="CONTACT_US">צרו קשר</option>
+            <option value="GET_OFFER">לקבלת ההצעה</option>
+            <option value="SUBSCRIBE">להצטרפות</option>
+          </select>
+        </label>
+        <label>כמה לשלם ביום (₪)
+          <input id="f-budget" type="number" min="1" step="1" data-path='["budget_daily_ils"]' data-kind="number">
+          <span class="hint" id="budget-month"></span>
+        </label>
+        <label>מתי להתחיל <span class="hint">(ריק = כשתפעיל)</span>
+          <input id="f-start" type="date" data-path='["start"]'>
+        </label>
+        <label>מתי לעצור <span class="hint">(ריק = עד שתעצור)</span>
+          <input id="f-end" type="date" data-path='["end"]'>
+        </label>
+        <label>שם העסק כמו בפייסבוק <span class="hint">(רק לתצוגה כאן)</span>
+          <input id="f-biz" type="text" data-path='["business_name"]'>
+        </label>
+      </div>
+    </section>
+
+    <section class="panel" id="s-aud" aria-labelledby="h-aud">
+      <header><h2 id="h-aud"><span class="stepno">2</span>למי מראים</h2></header>
+      <div class="grid">
+        <div style="display:grid;gap:4px">
+          <span style="font-weight:600;font-size:14px">מדינות</span>
+          <div class="chips" id="countries"></div>
+          <div class="row"><input id="country-add" type="text" placeholder="קוד מדינה, למשל IL" dir="ltr" maxlength="2"><button class="btn small" id="country-btn" type="button">הוסף</button></div>
+        </div>
+        <label>מגיל
+          <input id="f-age-min" type="number" min="18" max="65" data-path='["audience","age_min"]' data-kind="int">
+        </label>
+        <label>עד גיל
+          <input id="f-age-max" type="number" min="18" max="65" data-path='["audience","age_max"]' data-kind="int">
+        </label>
+        <div style="display:grid;gap:4px">
+          <span style="font-weight:600;font-size:14px">מי</span>
+          <div class="seg" id="gender">
+            <button type="button" data-v="all">כולם</button>
+            <button type="button" data-v="female">נשים</button>
+            <button type="button" data-v="male">גברים</button>
+          </div>
+        </div>
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:400">
+        <input type="checkbox" id="f-strict" data-path='["audience","strict_age"]' data-kind="bool" style="width:auto"> רק בדיוק בגילים האלה
+        <span class="hint">(בלי זה Meta רשאי להראות גם מעט מחוץ לטווח, אם זה עובד טוב יותר)</span>
+      </label>
+      <label>מי הם, במילים שלך <span class="hint">(עוזר לנו לכתוב ולעצב. ל-Meta זה לא נשלח)</span>
+        <textarea id="f-who" data-path='["audience","who"]' placeholder="למשל: אמהות עובדות שמרגישות שאין להן רגע לעצמן"></textarea>
+      </label>
+    </section>
+
+    <section class="panel" id="s-angles" aria-labelledby="h-angles">
+      <header><h2 id="h-angles"><span class="stepno">3</span>מה אומרים</h2><button class="btn" id="add-angle" type="button">+ זווית חדשה</button></header>
+      <p class="hint">כל זווית היא סיפור אחר על אותו דבר. בכל זווית יש תמונות, כותרות וטקסטים, וכל צירוף שלהם הוא מודעה. אפשר גם לבקש מ-Claude בשיחה לשנות כל דבר כאן, וזה יופיע תוך שניות.</p>
+      <div class="angles" id="angles"></div>
+    </section>
+
+    <section class="panel" id="s-ads" aria-labelledby="h-ads">
+      <div class="ads-head">
+        <h2 id="h-ads"><span class="stepno">4</span>בוחרים מודעות</h2>
+        <div class="chips">
+          <div class="seg" id="view"><button type="button" data-v="feed" aria-pressed="true">בפיד</button><button type="button" data-v="story" aria-pressed="false">בסטורי</button></div>
+          <div class="seg" id="filter"><button type="button" data-v="all" aria-pressed="true">הכול</button><button type="button" data-v="open" aria-pressed="false">לא הוחלט</button><button type="button" data-v="keep" aria-pressed="false">👍 נבחרו</button></div>
+        </div>
+      </div>
+      <p class="hint" id="ads-count"></p>
+      <div class="ads" id="ads"></div>
+      <div style="display:grid;gap:6px;border-top:1px solid var(--line);padding-top:14px">
+        <b>התמונות נוצרו ב-AI?</b>
+        <span class="hint">Meta מבקש לדעת. בחלק מהמדינות יופיע אז על המודעה "AI info". אי אפשר לשנות אחרי שהמודעה נוצרת.</span>
+        <div class="seg" id="ai"><button type="button" data-v="true">כן</button><button type="button" data-v="false">לא</button></div>
+      </div>
+    </section>
+
+    <section class="panel checks" id="s-pack" aria-labelledby="h-checks">
+      <header><h2 id="h-checks"><span class="stepno">5</span>אורזים</h2></header>
+      <div id="checks"></div>
+    </section>
+  </div>
+</main>
+
+<input type="file" id="file" accept=".jpg,.jpeg,.png,.webp" multiple hidden>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const CTA_HE = { LEARN_MORE: "למידע נוסף", SIGN_UP: "להרשמה", SHOP_NOW: "לקנייה", BOOK_NOW: "להזמנת מקום",
+    ORDER_NOW: "להזמנה", CONTACT_US: "צרו קשר", GET_OFFER: "לקבלת ההצעה", SUBSCRIBE: "להצטרפות" };
+  const HEAD_SOFT = 40, TEXT_SOFT = 125, BUDGET_WARN = 100;
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  const uid = (p) => p + Math.random().toString(36).slice(2, 9);
+
+  // ---------- theme ----------
+  function setTheme(t) {
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+    else document.documentElement.removeAttribute("data-theme");
+    document.querySelectorAll("#theme button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === t)));
+    try { localStorage.setItem("studio-theme", t); } catch (e) {}
+  }
+  let savedTheme = "auto";
+  try { savedTheme = localStorage.getItem("studio-theme") || "auto"; } catch (e) {}
+  setTheme(savedTheme);
+  $("theme").addEventListener("click", (ev) => { const b = ev.target.closest("button"); if (b) setTheme(b.dataset.v); });
+
+  // ---------- server ----------
+  async function api(method, path, body, headers) {
+    const isBlob = body instanceof Blob;
+    const r = await fetch(path, { method, headers: Object.assign({ "X-Studio": "1" }, body && !isBlob ? { "Content-Type": "application/json" } : {}, headers || {}),
+      body: isBlob ? body : body ? JSON.stringify(body) : undefined });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data };
+  }
+  function online(yes) { $("offline").hidden = yes; document.body.classList.toggle("offline", !yes); }
+
+  // ---------- campaign state ----------
+  let key = null;
+  let state = null;              // last server state: {campaign, rev, check, rejected, pending}
+  let c = null;                  // local working copy of the campaign
+  const queue = [];              // ops waiting to be sent
+  const pendingPaths = new Map();// path json -> timer for debounced field edits
+  const pendingBase = new Map(); // path json -> the server's value when the founder started editing it
+  let sending = false, conflicts = [];
+  let view = "feed", filter = "all", uploadAngle = null, angleSig = null;
+
+  // ---------- routing ----------
+  function route() {
+    const h = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
+    key = h && h.includes("/") ? h : null;
+    $("home").hidden = !!key; $("campaign").hidden = !key;
+    $("home-btn").hidden = !key; $("home-title").hidden = !!key;
+    $("f-name").hidden = !key; $("status").hidden = !key; $("pack").hidden = !key;
+    state = null; c = null; queue.length = 0; pendingPaths.clear(); pendingBase.clear(); conflicts = []; angleSig = null;
+    if (key) loadCampaign(); else loadHome();
+  }
+  window.addEventListener("hashchange", route);
+
+  // ---------- home ----------
+  async function loadHome() {
+    try {
+      const r = await api("GET", "/api/campaigns");
+      if (!r.ok) throw 0;
+      online(true);
+      const by = {};
+      r.data.campaigns.forEach((x) => (by[x.venture] = by[x.venture] || []).push(x));
+      const vs = Object.keys(by);
+      const rej = (r.data.rejected || []).map((x) => `<div class="banner bad"><b>קמפיין חדש מהשיחה לא נוצר (${esc(x.venture)}):</b><div class="row-actions"><span>${esc(x.reason)}</span><button class="btn small" data-dismiss-new="${esc(x.venture)}" data-name="${esc(x.name)}" type="button">הבנתי</button></div></div>`).join("");
+      $("ventures").innerHTML = rej + (vs.length ? vs.map((v) => `<div style="display:grid;gap:10px"><h2>${esc(v)}</h2><div class="cards">${by[v].map((x) => {
+        const pill = x.broken ? '<span class="pill draft">קובץ פגום</span>' : x.launched ? '<span class="pill live">ב-Meta, מושהה</span>' : x.packed ? '<span class="pill packed">ארוז ✓</span>' : '<span class="pill draft">טיוטה</span>';
+        const meta = x.broken ? esc(x.broken) : `👍 ${x.kept} מתוך ${x.total} מודעות` + (x.errors ? ` · ${x.errors} דברים לתקן` : "");
+        return `<a class="card" href="#/${encodeURIComponent(x.key)}"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><h3>${esc(x.name)}</h3>${pill}</div><span class="meta">${meta}</span></a>`;
+      }).join("")}</div></div>`).join("")
+        : `<div class="empty"><h2 style="margin-bottom:8px">אין עדיין קמפיינים</h2>כתוב ל-Claude בשיחה, למשל: "תבנה לי קמפיין לסדנה של נובמבר, 40 ₪ ליום". הקמפיין יופיע כאן לבד.<br><span class="hint">תיקייה: ${esc(r.data.root)}</span></div>`);
+    } catch (e) { online(false); }
+  }
+  setInterval(() => { if (!key) loadHome(); }, 5000);
+  $("ventures").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("[data-dismiss-new]"); if (!b) return;
+    await api("POST", "/api/dismiss-new?v=" + encodeURIComponent(b.dataset.dismissNew) + "&name=" + encodeURIComponent(b.dataset.name));
+    loadHome();
+  });
+
+  async function loadCampaign() {
+    try {
+      const r = await api("GET", "/api/campaign?c=" + encodeURIComponent(key));
+      if (r.status === 404) { online(true); $("campaign").hidden = true; $("home").hidden = false; $("ventures").innerHTML = '<div class="empty">הקמפיין לא נמצא. <a href="#">לכל הקמפיינים</a></div>'; return; }
+      if (!r.ok) throw 0;
+      online(true); accept(r.data, true);
+    } catch (e) { online(false); }
+  }
+
+  function accept(s, force) {
+    const changed = force || !state || s.rev !== state.rev;
+    state = s;
+    if (!changed) { renderBanners(); renderStatus(); return; }
+    const local = c;
+    // Claude changed a field the founder is typing in: keep his text, and show Claude's so nothing is lost silently
+    for (const pj of pendingPaths.keys()) {
+      const incoming = JSON.stringify(getAt(s.campaign, JSON.parse(pj)) ?? null);
+      if (pendingBase.has(pj) && incoming !== pendingBase.get(pj)) {
+        conflicts.push({ path: JSON.parse(pj), claude_value: getAt(s.campaign, JSON.parse(pj)) });
+        pendingBase.set(pj, incoming);
+      }
+    }
+    c = JSON.parse(JSON.stringify(s.campaign));
+    // fields being edited and not yet sent keep their local value
+    if (local) for (const pj of pendingPaths.keys()) setAt(c, JSON.parse(pj), getAt(local, JSON.parse(pj)));
+    renderAll();
+  }
+
+  function getAt(obj, path) {
+    let n = obj;
+    for (const seg of path) {
+      if (n == null) return undefined;
+      n = typeof seg === "object" ? (Array.isArray(n) ? n.find((x) => x && x.id === seg.id) : undefined) : n[seg];
+    }
+    return n;
+  }
+  function setAt(obj, path, value) {
+    const parent = getAt(obj, path.slice(0, -1));
+    if (parent && typeof parent === "object" && !Array.isArray(parent)) parent[path[path.length - 1]] = value;
+  }
+
+  // ---------- sending ops ----------
+  function send(ops) { queue.push(...ops); flash("שומר…"); flush(); }
+  async function flush() {
+    if (sending || !queue.length) return;
+    sending = true;
+    const ops = queue.splice(0);
+    try {
+      const r = await api("POST", "/api/ops?c=" + encodeURIComponent(key), { ops, base_rev: state && state.rev });
+      if (r.status === 409) { flash("לא נשמר"); alertBanner(r.data.error); if (r.data.campaign) accept(r.data, true); }
+      else if (!r.ok) throw 0;
+      else {
+        online(true); flash("נשמר");
+        if (r.data.conflicts && r.data.conflicts.length) conflicts = conflicts.concat(r.data.conflicts);
+        if (r.data.failures && r.data.failures.length) alertBanner("חלק מהשינויים לא נשמרו: " + r.data.failures.join(" · "));
+        accept(r.data, false);
+      }
+    } catch (e) { queue.unshift(...ops); online(false); flash("לא נשמר"); }
+    sending = false;
+    if (queue.length && !document.body.classList.contains("offline")) flush();
+  }
+  function setField(path, value, delay) {
+    const pj = JSON.stringify(path);
+    if (!pendingPaths.has(pj) && state) pendingBase.set(pj, JSON.stringify(getAt(state.campaign, path) ?? null));
+    setAt(c, path, value);
+    clearTimeout(pendingPaths.get(pj));
+    pendingPaths.set(pj, setTimeout(() => { pendingPaths.delete(pj); pendingBase.delete(pj); send([{ op: "set", path, value: getAt(c, path) }]); }, delay ?? 500));
+    renderLive();
+  }
+  function flushFields() {
+    for (const [pj, t] of pendingPaths) { clearTimeout(t); const path = JSON.parse(pj); queue.push({ op: "set", path, value: getAt(c, path) }); }
+    pendingPaths.clear(); pendingBase.clear();
+  }
+  function flash(t) { $("saved").textContent = t; }
+  let alertTimer = null;
+  function alertBanner(msg) {
+    if (!msg) return;
+    const b = $("rejected"); b.hidden = false; b.innerHTML = `<b>${esc(msg)}</b>`;
+    clearTimeout(alertTimer); alertTimer = setTimeout(() => { alertTimer = null; renderBanners(); }, 7000);
+  }
+
+  // changes from the chat show up here
+  setInterval(async () => {
+    if (!key || sending || queue.length) return;
+    try {
+      const r = await api("GET", "/api/campaign?c=" + encodeURIComponent(key));
+      if (!r.ok) throw 0;
+      const wasOffline = document.body.classList.contains("offline");
+      online(true);
+      if (state && r.data.rev !== state.rev) flash("עודכן מהשיחה");
+      accept(r.data, false);
+      if (wasOffline && queue.length) flush();
+    } catch (e) { online(false); }
+  }, 2000);
+
+  // ---------- rendering ----------
+  const fid = (path) => "p" + Array.from(JSON.stringify(path)).reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7).toString(36);
+  const img = (f) => "/files/" + key.split("/").map(encodeURIComponent).join("/") + "/" + String(f || "").split("/").map(encodeURIComponent).join("/");
+  const counter = (t, soft) => { const n = (t || "").length; return `<span class="count${n > soft ? " over" : ""}">${n}/${soft}</span>`; };
+  const busy = (el) => pendingPaths.has(el.dataset.path);
+
+  function renderAll() {
+    document.querySelectorAll("#campaign [data-path], #f-name").forEach((el) => {
+      if (el.closest("#angles") || busy(el)) return;
+      const v = getAt(c, JSON.parse(el.dataset.path));
+      if (el.type === "checkbox") el.checked = !!v; else el.value = v ?? "";
+    });
+    segSet("gender", (c.audience || {}).gender || "all");
+    segSet("ai", c.ai_images === true ? "true" : c.ai_images === false ? "false" : null);
+    renderCountries(); renderAngles(); renderLive(); renderBanners();
+  }
+  function renderLive() { renderBudget(); renderAds(); renderSteps(); renderStatus(); renderChecks(); }
+  function segSet(id, v) { document.querySelectorAll("#" + id + " button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === v))); }
+
+  function renderBudget() {
+    const b = Number(c.budget_daily_ils) || 0;
+    $("budget-month").className = b > BUDGET_WARN ? "warnline" : "hint";
+    $("budget-month").textContent = b ? `בערך ₪${Math.round(b * 30.4).toLocaleString("he-IL")} בחודש` + (b > BUDGET_WARN ? " · יותר מ-100 ₪ ליום" : "") : "";
+  }
+
+  function renderCountries() {
+    const list = (c.audience || {}).countries || [];
+    $("countries").innerHTML = list.map((x, i) => `<span class="chip" dir="ltr">${esc(x)}<button class="x" data-i="${i}" aria-label="הסר ${esc(x)}">×</button></span>`).join("") || '<span class="hint">אין</span>';
+  }
+
+  function renderAngles() {
+    const sig = JSON.stringify((c.angles || []).map((a) => [a.id, (a.images || []).map((i) => i.id + i.file), (a.headlines || []).map((h) => h.id), (a.texts || []).map((t) => t.id)]));
+    const box = $("angles");
+    if (sig === angleSig) {
+      box.querySelectorAll("[data-path]").forEach((el) => {
+        if (busy(el) || el.tagName === "BUTTON") return;
+        const v = getAt(c, JSON.parse(el.dataset.path)) ?? "";
+        if (el.value !== v) el.value = v;
+        const slot = box.querySelector(`.count-slot[data-for="${el.id}"]`);
+        if (slot) slot.innerHTML = counter(v, el.dataset.soft === "h" ? HEAD_SOFT : TEXT_SOFT);
+      });
+      return;
+    }
+    const focused = document.activeElement && document.activeElement.id;
+    angleSig = sig;
+    if (!(c.angles || []).length) { box.innerHTML = '<div class="empty">אין עדיין זוויות. בקש מ-Claude בשיחה למלא את הקמפיין, או הוסף זווית בעצמך.</div>'; return; }
+    box.innerHTML = c.angles.map((a) => {
+      const A = { id: a.id };
+      const pj = (...rest) => esc(JSON.stringify(["angles", A, ...rest]));
+      const list = (name, items, soft, multi) => items.map((it) => {
+        const path = ["angles", A, name, { id: it.id }, "text"];
+        const id = fid(path);
+        const field = multi
+          ? `<textarea id="${id}" data-path="${esc(JSON.stringify(path))}" data-soft="${soft}" aria-label="טקסט">${esc(it.text)}</textarea>`
+          : `<input type="text" id="${id}" data-path="${esc(JSON.stringify(path))}" data-soft="${soft}" value="${esc(it.text)}" aria-label="כותרת">`;
+        return `<div><div class="row">${field}<button class="x" data-act="del" data-target="${esc(JSON.stringify(["angles", A, name, { id: it.id }]))}" aria-label="מחק">×</button></div><div class="count-slot" data-for="${id}">${counter(it.text, soft === "h" ? HEAD_SOFT : TEXT_SOFT)}</div></div>`;
+      }).join("");
+      return `<article class="angle">
+        <div class="angle-head"><input type="text" id="${fid(["angles", A, "name"])}" data-path="${pj("name")}" value="${esc(a.name)}" placeholder="שם הזווית" aria-label="שם הזווית"><button class="x" data-act="del-angle" data-target="${esc(JSON.stringify(["angles", A]))}" aria-label="מחק זווית">🗑</button></div>
+        <label>למה זה יעבוד <textarea id="${fid(["angles", A, "why"])}" data-path="${pj("why")}" style="min-height:48px">${esc(a.why)}</textarea></label>
+        <div style="display:grid;gap:6px"><span style="font-weight:600;font-size:14px">תמונות</span>
+          <div class="imgs">${(a.images || []).map((im) => `<div class="thumb"><img src="${esc(img(im.file))}" alt="" loading="lazy"><button class="x" data-act="del" data-target="${esc(JSON.stringify(["angles", A, "images", { id: im.id }]))}" aria-label="הסר תמונה">×</button></div>`).join("")}
+            <button type="button" class="add-img" data-act="add-img" data-angle="${esc(a.id)}">+ תמונה</button></div></div>
+        <div style="display:grid;gap:6px"><span style="font-weight:600;font-size:14px">כותרות</span>${list("headlines", a.headlines || [], "h", false)}
+          <button class="btn small" data-act="add" data-list="headlines" data-angle="${esc(a.id)}" type="button" style="justify-self:start">+ כותרת</button></div>
+        <div style="display:grid;gap:6px"><span style="font-weight:600;font-size:14px">טקסטים</span>${list("texts", a.texts || [], "t", true)}
+          <button class="btn small" data-act="add" data-list="texts" data-angle="${esc(a.id)}" type="button" style="justify-self:start">+ טקסט</button></div>
+      </article>`;
+    }).join("");
+    if (focused && $(focused)) $(focused).focus();
+  }
+
+  function combos() {
+    const out = [];
+    (c.angles || []).forEach((a) => (a.images || []).forEach((i) => (a.headlines || []).forEach((h) => (a.texts || []).forEach((t) =>
+      out.push({ key: [a.id, i.id, h.id, t.id].join("|"), a, i, h, t })))));
+    return out;
+  }
+  const shortText = (t) => t.length <= TEXT_SOFT ? esc(t) : esc(t.slice(0, TEXT_SOFT)) + '<span class="more">… עוד</span>';
+
+  function renderAds() {
+    const all = combos(), picks = c.picks || {};
+    const pickOf = (k) => (picks[k] === "keep" || picks[k] === "drop") ? picks[k] : "";
+    const keptN = all.filter((x) => pickOf(x.key) === "keep").length, openN = all.filter((x) => !pickOf(x.key)).length;
+    $("ads-count").textContent = all.length ? `${all.length} מודעות אפשריות · 👍 ${keptN} נבחרו · ${openN} עוד לא הוחלטו. רק מה שמסומן 👍 יוצא.` : "";
+    const list = all.filter((x) => filter === "all" || (filter === "keep" ? pickOf(x.key) === "keep" : !pickOf(x.key)));
+    const biz = esc(c.business_name || "שם העסק"), cta = esc(CTA_HE[c.cta] || "");
+    if (!all.length) { $("ads").innerHTML = '<div class="empty">המודעות יופיעו כאן כשיהיו בזווית לפחות תמונה, כותרת וטקסט.</div>'; return; }
+    if (!list.length) { $("ads").innerHTML = '<div class="empty">אין מודעות בסינון הזה.</div>'; return; }
+    $("ads").innerHTML = list.map((x) => {
+      const p = pickOf(x.key);
+      const src = esc(img(x.i.file));
+      const mock = view === "feed"
+        ? `<div class="mock"><div class="hd"><span class="av"></span><div><b>${biz}</b><div class="hint" style="font-size:11px">ממומן</div></div></div>
+            <div class="txt">${shortText(x.t.text || "")}</div><div class="pic"><img src="${src}" alt="" loading="lazy"></div>
+            <div class="ft"><b>${esc(x.h.text)}</b><span class="cta">${cta}</span></div></div>`
+        : `<div class="mock story"><img src="${src}" alt="" loading="lazy"><div class="top"><span class="av"></span>${biz} · ממומן</div>
+            <div class="sx"><b>${esc(x.h.text)}</b><span>${shortText(x.t.text || "")}</span><span class="cta">${cta}</span></div></div>`;
+      return `<div class="ad ${p}" data-key="${esc(x.key)}">${mock}<div class="meta">${esc(x.a.name || "זווית")}</div>
+        <div class="vote"><button class="k" data-v="keep" aria-pressed="${p === "keep"}" aria-label="אהבתי">👍</button><button class="d" data-v="drop" aria-pressed="${p === "drop"}" aria-label="לא">👎</button></div></div>`;
+    }).join("");
+  }
+
+  function renderSteps() {
+    const errs = state ? state.check.errors : [];
+    const has = (re) => errs.some((e) => re.test(e));
+    const steps = [
+      ["s-goal", "מה רוצים", !has(/קישור|יקרה|תקציב|כפתור|תאריך|שם/)],
+      ["s-aud", "למי", !has(/מדינה|גילים|מגדר/)],
+      ["s-angles", "מה אומרים", combos().length > 0],
+      ["s-ads", "בוחרים", combos().length > 0 && !has(/👍|AI|בחירה|תמונה|כותרת או טקסט/)],
+      ["s-pack", "אורזים", packedNow()],
+    ];
+    $("steps").innerHTML = steps.map(([id, t, done]) => `<a href="#" data-to="${id}" class="${done ? "done" : ""}">${t}</a>`).join("");
+  }
+
+  function packedNow() { return !!(state && state.check.packed) && !queue.length && !pendingPaths.size; }
+
+  function renderStatus() {
+    if (!state || !c) return;
+    const launched = !!(c.meta || {}).campaign_id;
+    const s = $("status");
+    s.className = "pill " + (launched ? "live" : packedNow() ? "packed" : "draft");
+    s.textContent = launched ? "ב-Meta, מושהה" : packedNow() ? "ארוז ✓" : "טיוטה";
+    $("pack").disabled = state.check.errors.length > 0 || packedNow() || state.pending > 0;
+    $("pack").textContent = packedNow() ? "ארוז ✓" : "ארוז לשליחה";
+  }
+
+  function renderChecks() {
+    if (!state) return;
+    const e = state.check.errors.map((x) => `<li class="e">${esc(x)}</li>`).join("");
+    const w = state.check.warnings.map((x) => `<li class="w">${esc(x)}</li>`).join("");
+    $("checks").innerHTML = (e || w ? `<ul>${e}${w}</ul>` : '<p>הכול תקין.</p>')
+      + (e ? '<p class="hint">אדום עוצר את האריזה. צהוב הוא רק הערה.</p>'
+        : `<p>${packedNow() ? "ארוז. חזור לשיחה וכתוב <b>\"שגר את הקמפיין\"</b>." : "לחץ <b>ארוז לשליחה</b> למעלה. אחר כך בשיחה: \"שגר את הקמפיין\"."}</p>`);
+  }
+
+  function renderBanners() {
+    if (!state || !c) return;
+    const meta = c.meta || {};
+    const L = $("launched");
+    if (meta.campaign_id) {
+      const act = meta.ad_account_id ? `act=${encodeURIComponent(meta.ad_account_id)}&` : "";
+      L.innerHTML = `<b>הקמפיין נמצא ב-Meta, מושהה.</b><span>שום שקל לא יוצא עד שאתה מפעיל אותו בעצמך במנהל המודעות.</span>
+        <a href="https://adsmanager.facebook.com/adsmanager/manage/campaigns?${act}selected_campaign_ids=${encodeURIComponent(meta.campaign_id)}" target="_blank" rel="noopener">פתח במנהל המודעות ←</a>`;
+      L.hidden = false;
+    } else L.hidden = true;
+    const P = $("packed-banner");
+    P.hidden = !(packedNow() && !meta.campaign_id);
+    P.innerHTML = `<b>ארוז.</b><span>חזור לשיחה וכתוב <b>"שגר את הקמפיין"</b>. לפני שמשהו מגיע ל-Meta הוא עובר בדיקת מותג ובדיקה משפטית, ונוצר שם מושהה. כל שינוי כאן מבטל את האריזה.</span>`;
+    const R = $("review");
+    R.hidden = !c.review_notes;
+    R.innerHTML = c.review_notes ? `<b>הערות מהבדיקה</b><span class="pre">${esc(c.review_notes)}</span>` : "";
+    const C = $("conflicts");
+    C.hidden = !conflicts.length;
+    C.innerHTML = conflicts.length ? `<b>Claude שינה שדה שערכת באותו רגע. נשאר הערך שלך.</b>` + conflicts.map((x, i) =>
+      `<div class="row-actions"><span>הערך של Claude: «${esc(typeof x.claude_value === "string" ? x.claude_value : JSON.stringify(x.claude_value))}»</span>
+       <button class="btn small" data-conf="take" data-i="${i}" type="button">קח את של Claude</button><button class="btn small" data-conf="keep" data-i="${i}" type="button">השאר שלי</button></div>`).join("") : "";
+    const J = $("rejected");
+    if (!alertTimer) {
+      J.hidden = !(state.rejected || []).length;
+      J.innerHTML = (state.rejected || []).length ? `<b>בקשת שינוי מהשיחה לא נכנסה:</b>` + state.rejected.map((x) =>
+        `<div class="row-actions"><span>${esc(x.reason)}</span><button class="btn small" data-dismiss="${esc(x.name)}" type="button">הבנתי</button></div>`).join("") : "";
+    }
+    $("pending").hidden = !state.pending;
+  }
+
+  // ---------- events ----------
+  document.addEventListener("input", (ev) => {
+    const el = ev.target;
+    if (!key || !c || !el.dataset || !el.dataset.path) return;
+    const path = JSON.parse(el.dataset.path);
+    let v = el.type === "checkbox" ? el.checked : el.value;
+    if (el.dataset.kind === "number") v = el.value === "" ? null : Number(el.value);
+    if (el.dataset.kind === "int") v = el.value === "" ? null : parseInt(el.value, 10);
+    setField(path, v, el.type === "checkbox" || el.tagName === "SELECT" ? 0 : 500);
+    const slot = $("angles").querySelector(`.count-slot[data-for="${el.id}"]`);
+    if (slot) slot.innerHTML = counter(el.value, el.dataset.soft === "h" ? HEAD_SOFT : TEXT_SOFT);
+  });
+
+  $("gender").addEventListener("click", (ev) => { const b = ev.target.closest("button"); if (!b) return; segSet("gender", b.dataset.v); setField(["audience", "gender"], b.dataset.v, 0); });
+  $("ai").addEventListener("click", (ev) => { const b = ev.target.closest("button"); if (!b) return; segSet("ai", b.dataset.v); setField(["ai_images"], b.dataset.v === "true", 0); });
+  $("view").addEventListener("click", (ev) => { const b = ev.target.closest("button"); if (!b) return; view = b.dataset.v; segSet("view", view); renderAds(); });
+  $("filter").addEventListener("click", (ev) => { const b = ev.target.closest("button"); if (!b) return; filter = b.dataset.v; segSet("filter", filter); renderAds(); });
+  $("steps").addEventListener("click", (ev) => { const a = ev.target.closest("a"); if (!a) return; ev.preventDefault(); $(a.dataset.to).scrollIntoView({ behavior: "smooth", block: "start" }); });
+
+  function addCountry() {
+    const v = $("country-add").value.trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(v)) return;
+    const l = ((c.audience || {}).countries || []).slice();
+    if (!l.includes(v)) l.push(v);
+    $("country-add").value = ""; setField(["audience", "countries"], l, 0); renderCountries();
+  }
+  $("country-btn").addEventListener("click", addCountry);
+  $("country-add").addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addCountry(); } });
+  $("countries").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button"); if (!b) return;
+    const l = ((c.audience || {}).countries || []).slice(); l.splice(+b.dataset.i, 1);
+    setField(["audience", "countries"], l, 0); renderCountries();
+  });
+
+  function structural(ops) {
+    flushFields();
+    ops.forEach((op) => { // apply locally so the board answers at once; the server's answer replaces it
+      if (op.op === "add") { const l = getAt(c, op.path); if (Array.isArray(l)) l.push(JSON.parse(JSON.stringify(op.value))); }
+      if (op.op === "remove") { const parent = getAt(c, op.path.slice(0, -1)); if (Array.isArray(parent)) { const i = parent.findIndex((x) => x.id === op.path[op.path.length - 1].id); if (i >= 0) parent.splice(i, 1); } }
+    });
+    angleSig = null; renderAngles(); renderLive();
+    send(ops);
+  }
+  $("add-angle").addEventListener("click", () => {
+    structural([{ op: "add", path: ["angles"], value: { id: uid("a"), name: "", why: "", images: [], headlines: [{ id: uid("h"), text: "" }], texts: [{ id: uid("t"), text: "" }] } }]);
+  });
+  $("angles").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-act]"); if (!b) return;
+    const act = b.dataset.act;
+    if (act === "del-angle") {
+      if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "בטוח?"; setTimeout(() => { b.dataset.confirm = ""; b.textContent = "🗑"; }, 3000); return; }
+      structural([{ op: "remove", path: JSON.parse(b.dataset.target) }]);
+    } else if (act === "del") structural([{ op: "remove", path: JSON.parse(b.dataset.target) }]);
+    else if (act === "add") structural([{ op: "add", path: ["angles", { id: b.dataset.angle }, b.dataset.list], value: { id: uid(b.dataset.list[0]), text: "" } }]);
+    else if (act === "add-img") { uploadAngle = b.dataset.angle; $("file").click(); }
+  });
+  $("file").addEventListener("change", async (ev) => {
+    const files = [...ev.target.files]; ev.target.value = "";
+    if (!uploadAngle) return;
+    for (const f of files) {
+      flash("מעלה…");
+      const r = await api("POST", "/api/upload?c=" + encodeURIComponent(key), f, { "X-Filename": encodeURIComponent(f.name) });
+      if (!r.ok) { alertBanner(r.data.error || "ההעלאה נכשלה."); continue; }
+      structural([{ op: "add", path: ["angles", { id: uploadAngle }, "images"], value: { id: uid("i"), file: r.data.file } }]);
+    }
+  });
+  $("ads").addEventListener("click", (ev) => {
+    const b = ev.target.closest(".vote button"); if (!b) return;
+    const k = b.closest(".ad").dataset.key;
+    const picks = Object.assign({}, c.picks || {});
+    if (picks[k] === b.dataset.v) delete picks[k]; else picks[k] = b.dataset.v;
+    setField(["picks"], picks, 0);
+  });
+  $("conflicts").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-conf]"); if (!b) return;
+    const x = conflicts[+b.dataset.i];
+    conflicts.splice(+b.dataset.i, 1);
+    if (b.dataset.conf === "take") { setField(x.path, x.claude_value, 0); angleSig = null; renderAll(); }
+    renderBanners();
+  });
+  $("rejected").addEventListener("click", async (ev) => {
+    const b = ev.target.closest("[data-dismiss]"); if (!b) return;
+    const r = await api("POST", "/api/dismiss?c=" + encodeURIComponent(key) + "&name=" + encodeURIComponent(b.dataset.dismiss));
+    if (r.ok) accept(r.data, true);
+  });
+  $("pack").addEventListener("click", async () => {
+    flushFields(); await flush();
+    while (sending) await new Promise((res) => setTimeout(res, 100));
+    if (queue.length || !state) { alertBanner("השינויים עוד לא נשמרו. נסה שוב בעוד רגע."); return; }
+    const r = await api("POST", "/api/pack?c=" + encodeURIComponent(key), { base_rev: state.rev });
+    if (!r.ok && r.data.error) alertBanner(r.data.error);
+    if (r.data && r.data.campaign) accept(r.data, true);
+    flash(r.ok ? "נארז" : "לא נארז");
+    if (r.ok) window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
+  window.addEventListener("beforeunload", (ev) => { if (queue.length || pendingPaths.size) { flushFields(); flush(); ev.preventDefault(); ev.returnValue = ""; } });
+  route();
+})();
+</script>
+</body>
+</html>
