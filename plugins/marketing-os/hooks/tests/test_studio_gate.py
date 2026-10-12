@@ -96,6 +96,23 @@ case("grep and tests are allowed", d("Bash", command="grep -n X-Studio studio.py
 case("curl elsewhere is allowed", d("Bash", command="curl https://example.com") is None)
 case("other tools pass", d("Read", file_path=C) is None)
 
+# second review round
+case("a live status encoded twice, in a list, or in lower case is denied",
+     d(P + "ads_create_ad", adset_spec=json.dumps(json.dumps({"status": "ACTIVE"}))) == "deny"
+     and d(P + "ads_create_ad", status=["ACTIVE"]) == "deny" and d(P + "ads_create_ad", Status="active") == "deny")
+case("duplicate keys in an update are denied", d(P + "ads_update_entity", fields='{"status":"ACTIVE","status":"PAUSED"}') == "deny")
+case("device_commit_files in any shape is checked",
+     d("mcp__r__device_commit_files", files=["C:\\w\\שיווק\\קמפיינים\\n\\campaign.json"]) == "deny"
+     and d("mcp__r__device_commit_files", files=[{"path": C}]) == "deny")
+case("a shell write to campaign.json is denied", d("Bash", command=f"cp /tmp/x '{C}'") == "deny"
+     and d("Bash", command=f"echo x > '{C}'") == "deny" and d("mcp__r__device_bash", command=f"sed -i s/a/b/ '{C}'") == "deny")
+case("reading campaign.json in the shell is fine", d("Bash", command=f"cat '{C}' | python3 -m json.tool") is None)
+case("a URL elsewhere plus the port in another command is fine",
+     d("Bash", command="curl https://example.com && echo localhost:8765") is None)
+r = subprocess.run([sys.executable, str(HOOKS / "studio-gate.py")], input=json.dumps({"tool_name": P + "ads_create_ad", "tool_input": {"x": {1, 2} and None, "files": 5}}),
+                   capture_output=True, text=True)
+case("odd input shapes never crash the gate", r.returncode == 0)
+
 # the sh wrapper: python missing → Meta writes denied, reads and others pass
 import shutil
 import tempfile

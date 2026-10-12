@@ -34,9 +34,12 @@ HEADLINE_SOFT = 40
 TEXT_SOFT = 125
 MANY_ADS = 6
 BUDGET_WARN_ILS = 100
+BUDGET_MIN_ILS = 4        # Meta's minimum for this account was 3.08 ₪ a day (12.10); a little margin
+BUDGET_MAX_ILS = 10000    # far above anything intended; stops a typo from reaching Meta
 IMAGE_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 SLUG_RE = re.compile(r"^[A-Za-z0-9א-ת][A-Za-z0-9א-ת_-]{0,59}$")
+RESERVED_SLUGS = ("inbox", "rejected", "images")
 
 # Written once when a campaign is created; Meta object names are tagged with it, so a launch can find what exists.
 FIXED = ("studio_id", "version")
@@ -93,20 +96,29 @@ def campaigns_dir(root, venture):
     return pathlib.Path(root, venture, *CAMPAIGNS_SUB)
 
 
+def ventures(root):
+    """Venture folders under the root. Names starting with . or _ are not ventures (system and archive folders)."""
+    root = pathlib.Path(root)
+    if not root.is_dir():
+        return []
+    return sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
+
+
 def find_campaigns(root):
     """[(venture, slug, folder)] for every campaign folder that has a campaign.json."""
     out = []
-    root = pathlib.Path(root)
-    if not root.is_dir():
-        return out
-    for venture in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))):
+    for venture in ventures(root):
         base = venture.joinpath(*CAMPAIGNS_SUB)
         if not base.is_dir():
             continue
         for d in sorted(base.iterdir()):
-            if d.is_dir() and d.name not in ("inbox",) and (d / "campaign.json").is_file():
+            if d.is_dir() and d.name not in RESERVED_SLUGS and (d / "campaign.json").is_file():
                 out.append((venture.name, d.name, d))
     return out
+
+
+def is_patch_file(p):
+    return p.is_file() and p.suffix.lower() == ".json" and not is_foreign(p.name)
 
 
 def is_foreign(name):
@@ -129,6 +141,20 @@ def image_size(path):
             head = f.read(26)
             if head[:8] == b"\x89PNG\r\n\x1a\n":
                 return struct.unpack(">II", head[16:24])
+            if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+                f.seek(12)
+                chunk = f.read(4)
+                f.seek(20)
+                data = f.read(10)
+                if chunk == b"VP8 " and len(data) >= 10:
+                    w, h = struct.unpack("<HH", data[6:10])
+                    return (w & 0x3FFF, h & 0x3FFF)
+                if chunk == b"VP8L" and len(data) >= 5:
+                    b = data[1:5]
+                    return (1 + (((b[1] & 0x3F) << 8) | b[0]), 1 + (((b[3] & 0xF) << 10) | (b[2] << 2) | ((b[1] & 0xC0) >> 6)))
+                if chunk == b"VP8X" and len(data) >= 10:
+                    return (1 + int.from_bytes(data[4:7], "little"), 1 + int.from_bytes(data[7:10], "little"))
+                return None
             if head[:2] != b"\xff\xd8":
                 return None
             f.seek(2)
@@ -239,50 +265,65 @@ def _ids_ok(campaign):
 
 
 def check(campaign, folder, today=None):
-    """Hebrew messages for the board and the chat. Errors block packing; warnings do not."""
+    """Hebrew messages for the board and the chat. Errors block packing; warnings do not.
+
+    "steps" counts errors per board step (goal, audience, angles, ads), so the board never has to read the text.
+    """
     today = today or date.today()
     errors, warnings = [], []
-    errors += _ids_ok(campaign)
+    steps = {"goal": 0, "audience": 0, "angles": 0, "ads": 0}
+
+    def err(step, msg):
+        errors.append(msg)
+        steps[step] += 1
+
+    id_errors = _ids_ok(campaign)
+    for e in id_errors:
+        err("angles", e)
+    broken = bool(id_errors)
     if not str(campaign.get("name") or "").strip():
-        errors.append("לקמפיין אין שם.")
+        err("goal", "לקמפיין אין שם.")
     if campaign.get("goal") not in GOALS:
-        errors.append("לא נבחר מה רוצים שיקרה (שיגיעו לאתר, או שיכירו אתכם).")
+        err("goal", "לא נבחר מה רוצים שיקרה (שיגיעו לאתר, או שיכירו אתכם).")
     parsed = urllib.parse.urlparse(str(campaign.get("link") or ""))
     if parsed.scheme != "https" or not parsed.netloc:
-        errors.append("הקישור צריך להיות כתובת מלאה שמתחילה ב-https://")
+        err("goal", "הקישור צריך להיות כתובת מלאה שמתחילה ב-https://")
     budget = campaign.get("budget_daily_ils")
-    if not isinstance(budget, (int, float)) or isinstance(budget, bool) or not math.isfinite(budget) or budget <= 0:
-        errors.append("תקציב יומי חסר או לא מספר.")
+    if not isinstance(budget, (int, float)) or isinstance(budget, bool) or not math.isfinite(budget):
+        err("goal", "תקציב יומי חסר או לא מספר.")
+    elif budget < BUDGET_MIN_ILS:
+        err("goal", f"התקציב היומי נמוך מדי. Meta דורש לפחות כ-{BUDGET_MIN_ILS} ₪ ליום.")
+    elif budget > BUDGET_MAX_ILS:
+        err("goal", f"תקציב של {budget:,.0f} ₪ ליום גבוה מדי. כנראה טעות הקלדה.")
     elif budget > BUDGET_WARN_ILS:
         warnings.append(f"תקציב של {budget:g} ₪ ליום, בערך {budget * 30.4:,.0f} ₪ בחודש. לוודא שזה מה שהתכוונת.")
     if campaign.get("cta") not in CTAS:
-        errors.append("לא נבחר כפתור למודעה.")
-    if campaign.get("ai_images") not in (True, False):
-        errors.append("צריך לסמן אם התמונות נוצרו ב-AI. Meta מבקש את ההצהרה, וההחלטה שלך.")
+        err("goal", "לא נבחר כפתור למודעה.")
     start, end = _date(campaign.get("start")), _date(campaign.get("end"))
     if campaign.get("start") and not start or campaign.get("end") and not end:
-        errors.append("תאריך לא תקין.")
+        err("goal", "תאריך לא תקין.")
     if start and start < today:
         warnings.append("תאריך ההתחלה כבר עבר. הקמפיין יתחיל ברגע שתפעיל אותו.")
     if end and (end <= today or (start and end <= start)):
-        errors.append("תאריך הסיום צריך להיות אחרי היום ואחרי תאריך ההתחלה.")
+        err("goal", "תאריך הסיום צריך להיות אחרי היום ואחרי תאריך ההתחלה.")
 
-    aud = campaign.get("audience") or {}
+    aud = campaign.get("audience") if isinstance(campaign.get("audience"), dict) else {}
     if not aud.get("countries"):
-        errors.append("לא נבחרה אף מדינה.")
+        err("audience", "לא נבחרה אף מדינה.")
     amin, amax = aud.get("age_min"), aud.get("age_max")
     if not isinstance(amin, int) or not isinstance(amax, int) or amin < 18 or amax > 65 or amin > amax:
-        errors.append("טווח הגילים צריך להיות בין 18 ל-65, והמינימום לא גדול מהמקסימום.")
+        err("audience", "טווח הגילים צריך להיות בין 18 ל-65, והמינימום לא גדול מהמקסימום.")
     if aud.get("gender") not in GENDERS:
-        errors.append("מגדר לא תקין.")
+        err("audience", "מגדר לא תקין.")
 
-    picks = campaign.get("picks") or {}
+    if campaign.get("ai_images") not in (True, False):
+        err("ads", "צריך לסמן אם התמונות נוצרו ב-AI. Meta מבקש את ההצהרה, וההחלטה שלך.")
+    picks = campaign.get("picks") if isinstance(campaign.get("picks"), dict) else {}
     if any(v not in ("keep", "drop") for v in picks.values()):
-        errors.append("יש בחירה לא תקינה במודעות.")
-    broken = any("מזהה" in e or "מבנה" in e for e in errors)
+        err("ads", "יש בחירה לא תקינה במודעות.")
     ads = [] if broken else kept(campaign)
     if not ads:
-        errors.append("עוד לא סימנת 👍 על אף מודעה.")
+        err("ads", "עוד לא סימנת 👍 על אף מודעה.")
     seen = set()
     for c in ads:
         label = f"«{c['angle'].get('name') or 'זווית'}»"
@@ -291,18 +332,21 @@ def check(campaign, folder, today=None):
             seen.add(f)
             p = inside(folder, f)
             if not p or pathlib.Path(f).suffix.lower() not in IMAGE_TYPES:
-                errors.append(f"התמונה {f or '(ריקה)'} בזווית {label} לא תקינה.")
+                err("ads", f"התמונה {f or '(ריקה)'} בזווית {label} לא תקינה.")
             elif not p.is_file():
-                errors.append(f"התמונה {f} בזווית {label} לא נמצאת בתיקייה.")
+                err("ads", f"התמונה {f} בזווית {label} לא נמצאת בתיקייה.")
             else:
                 try:
                     with open(p, "rb") as fh:
                         fh.read(1)
                 except OSError:
-                    errors.append(f"אי אפשר לקרוא את {f}. אולי היא שמורה רק בענן של Drive.")
+                    err("ads", f"אי אפשר לקרוא את {f}. אולי היא שמורה רק בענן של Drive.")
+                else:
+                    if not image_size(p):
+                        err("ads", f"הקובץ {f} לא נראה כמו תמונה תקינה (JPG, PNG או WEBP).")
         h, t = str(c["headline"].get("text") or "").strip(), str(c["text"].get("text") or "").strip()
         if not h or not t:
-            errors.append(f"במודעה שסימנת בזווית {label} חסרים כותרת או טקסט.")
+            err("ads", f"במודעה שסימנת בזווית {label} חסרים כותרת או טקסט.")
         if len(h) > HEADLINE_SOFT and ("h", h) not in seen:
             warnings.append(f"הכותרת «{h[:30]}…» ארוכה מ-{HEADLINE_SOFT} תווים, ובחלק מהמקומות היא תיחתך.")
             seen.add(("h", h))
@@ -313,7 +357,8 @@ def check(campaign, folder, today=None):
         warnings.append(f"סימנת {len(ads)} מודעות. בתקציב קטן עדיפות 3 עד 6, אחרת Meta לומד לאט.")
     for name in conflict_copies(folder):
         warnings.append(f"נמצא עותק כפול {name}, כנראה מסנכרון Drive. הלוח עובד רק עם campaign.json.")
-    return {"errors": errors, "warnings": warnings, "kept": len(ads), "total": 0 if broken else len(combos(campaign)),
+    return {"errors": errors, "warnings": warnings, "steps": steps, "kept": len(ads),
+            "total": 0 if broken else len(combos(campaign)),
             "packed": False if broken else is_packed(campaign, folder)}
 
 
@@ -348,6 +393,9 @@ def get_path(campaign, path):
 def _guard(path, source):
     if not path or not isinstance(path[0], str):
         raise PatchError("נתיב ריק.")
+    for seg in path:
+        if not (isinstance(seg, str) or (isinstance(seg, dict) and set(seg) == {"id"} and isinstance(seg["id"], str))):
+            raise PatchError("נתיב לא תקין בבקשה.")
     top = path[0]
     if top in FIXED:
         raise PatchError(f"«{top}» לא משתנה.")
@@ -398,7 +446,7 @@ def _shape(path):
 
 def _item_ok(kind, item):
     """A new item for an id list: the right fields, the right types."""
-    if not isinstance(item, dict) or not ID_RE.match(str(item.get("id", ""))):
+    if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not ID_RE.match(item["id"]):
         return False
     if kind in ("headlines", "texts"):
         return set(item) <= {"id", "text"} and _str(item.get("text", ""))
@@ -411,8 +459,9 @@ def _item_ok(kind, item):
             return False
         for sub in ("images", "headlines", "texts"):
             lst = item.get(sub, [])
-            ids = [x.get("id") for x in lst if isinstance(x, dict)]
-            if not isinstance(lst, list) or len(set(ids)) != len(lst) or not all(_item_ok(sub, x) for x in lst):
+            if not isinstance(lst, list) or not all(_item_ok(sub, x) for x in lst):
+                return False
+            if len({x["id"] for x in lst}) != len(lst):
                 return False
         return True
     return False
@@ -425,6 +474,16 @@ def apply_op(campaign, op, source):
     path = op["path"]
     _guard(path, source)
     kind = op["op"]
+    if kind == "set" and len(path) == 2 and path[0] == "picks":
+        value = op.get("value")
+        if value not in ("keep", "drop", None):
+            raise PatchError("בחירה לא תקינה.")
+        picks = campaign.setdefault("picks", {})
+        if value is None:
+            picks.pop(path[1], None)
+        else:
+            picks[path[1]] = value
+        return
     if kind == "set":
         check_type = SET_TYPES.get(_shape(path))
         if not check_type:
@@ -463,6 +522,20 @@ def apply_op(campaign, op, source):
         if not isinstance(parent, list):
             raise PatchError(f"נתיב לא תקין: {path}")
         parent.remove(item)
+        # a 👍 belongs to the ad the founder saw; once a part of it is gone, so is the pick, and an item added later
+        # under the same id starts unpicked
+        valid = {c["key"] for c in combos(campaign)}
+        campaign["picks"] = {k: v for k, v in (campaign.get("picks") or {}).items() if k in valid}
+
+
+def apply_op_safe(campaign, op, source):
+    """apply_op, with anything unexpected reported as a PatchError so one odd request never stops the others."""
+    try:
+        apply_op(campaign, op, source)
+    except PatchError:
+        raise
+    except Exception as e:
+        raise PatchError(f"בקשה פגומה ({type(e).__name__}).") from e
 
 
 def apply_ops(campaign, ops, source):
@@ -476,7 +549,7 @@ def apply_ops(campaign, ops, source):
     out = copy.deepcopy(campaign)
     touched = []
     for op in ops:
-        apply_op(out, op, source)
+        apply_op_safe(out, op, source)
         touched.append(op["path"])
     return out, touched
 
@@ -511,7 +584,7 @@ def read_patch(path):
     """The parsed patch file, or None while it is still unreadable (a half-written file). Raises PatchError on a
     wrong format."""
     try:
-        data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+        data = json.loads(pathlib.Path(path).read_text(encoding="utf-8-sig"))
     except (ValueError, UnicodeDecodeError, OSError):
         return None
     if not isinstance(data, dict) or data.get("format") != PATCH_FORMAT:
@@ -520,23 +593,27 @@ def read_patch(path):
 
 
 def pending_content_ops(folder):
-    """How many ops in the campaign's inbox touch content (anything but meta and review_notes)."""
+    """How many ops in the campaign's inbox touch content (anything but meta and review_notes). A file that cannot be
+    read or understood counts as one: it is waiting too, until the server applies or rejects it."""
     n = 0
     inbox = pathlib.Path(folder) / "inbox"
     if not inbox.is_dir():
         return 0
     for p in inbox.iterdir():
-        if not p.is_file() or is_foreign(p.name) or p.suffix != ".json":
+        if not is_patch_file(p):
             continue
         try:
             data = read_patch(p)
         except PatchError:
-            continue
-        if data is None:
             n += 1
             continue
-        for op in data.get("ops") or []:
-            top = (op.get("path") or [None])[0] if isinstance(op, dict) else None
+        ops = data.get("ops") if isinstance(data, dict) else None
+        if not isinstance(ops, list):
+            n += 1
+            continue
+        for op in ops:
+            path = op.get("path") if isinstance(op, dict) else None
+            top = path[0] if isinstance(path, list) and path and isinstance(path[0], str) else None
             if top not in NOT_CONTENT:
                 n += 1
     return n
@@ -544,16 +621,20 @@ def pending_content_ops(folder):
 
 # ---------- the plan for Meta ----------
 
-def tag(studio_id, key=None):
-    """The stable marker in every Meta object's name. A launch finds what already exists by searching for it, so a
-    repeated or interrupted launch creates only what is missing. The rest of the name is for the founder's eyes."""
-    return f"[studio:{studio_id}|{key}]" if key else f"[studio:{studio_id}]"
+def tag(studio_id):
+    """The stable marker in every Meta object's name. A launch finds what already exists by searching names for it, so
+    a repeated or interrupted launch creates only what is missing. The rest of the name is for the founder's eyes."""
+    return f"[studio:{studio_id}]"
 
 
-def plan(campaign, folder, inbox_content_ops=None):
+def ad_tag(key):
+    """Which ad of the plan an object is: the combo key."""
+    return f"[ad:{key}]"
+
+
+def plan(campaign, folder):
     """What to create in Meta. Refuses unless packed, unchanged since, clean, and nothing waits in the inbox."""
-    pending = pending_content_ops(folder) if inbox_content_ops is None else inbox_content_ops
-    if pending:
+    if pending_content_ops(folder):
         return None, ["יש שינויים מהשיחה שעוד לא נכנסו ללוח. פתח את הלוח כדי שייכנסו, ואז ארוז שוב."]
     result = check(campaign, folder)
     if not result["packed"]:
@@ -576,7 +657,8 @@ def plan(campaign, folder, inbox_content_ops=None):
     ads = []
     for n, c in enumerate(kept(campaign), 1):
         p = inside(folder, c["image"]["file"])
-        ads.append({"name": f"{c['angle'].get('name') or 'מודעה'} {n} {tag(slug, c['key'])}", "tag": tag(slug, c["key"]),
+        ads.append({"name": f"{c['angle'].get('name') or 'מודעה'} {n} {tag(slug)} {ad_tag(c['key'])}",
+                    "ad_tag": ad_tag(c["key"]),
                     "key": c["key"], "angle": c["angle"].get("name") or "",
                     "image": str(p), "image_file": c["image"]["file"], "image_size": image_size(p),
                     "image_sha256": file_digest(p),

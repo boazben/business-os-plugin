@@ -6,8 +6,8 @@
   studio.py patch  <campaign-dir> <ops.json | ->        a change request; the server applies it, or this command does
                                                         when no server is running
   studio.py check  <campaign-dir>                       errors and warnings (exit 1 on errors)
-  studio.py plan   <campaign-dir> [--inbox-content-ops N]  what to create in Meta; refuses unless packed, unchanged
-                                                        and nothing waits in the inbox (N: count seen on a staged copy)
+  studio.py plan   <campaign-dir>                       what to create in Meta; refuses unless packed, unchanged
+                                                        and nothing waits in the inbox
   studio.py status [--port 8765]                        is the board server running, and on which folder
   studio.py install-autostart --root R                  start the board at Windows logon, hidden (Startup folder)
   studio.py uninstall-autostart
@@ -15,6 +15,9 @@
 Root default: $CAMPAIGN_STUDIO_ROOT, else /mnt/c/Users/<user>/Documents/יזמות. See core.py for the folder layout.
 """
 import argparse
+import contextlib
+import fcntl
+import hashlib
 import http.server
 import json
 import os
@@ -56,18 +59,66 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# ---------- locks across processes ----------
+
+LOCK_DIR = pathlib.Path.home() / ".cache" / "business-os" / "campaign-studio"
+
+
+class RootLock:
+    """A lock shared by every process working on one root: the board server and `studio.py patch`. It lives on the
+    WSL file system, because file locks on /mnt/c are not reliable. Kinds: "write" around every write to a
+    campaign.json, "server" held for the whole life of a board server."""
+
+    def __init__(self, root, kind):
+        rid = hashlib.sha1(str(pathlib.Path(root).resolve()).encode()).hexdigest()[:16]
+        LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        self.path = LOCK_DIR / f"{rid}.{kind}.lock"
+        self.fd = None
+
+    def acquire(self, blocking=True):
+        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+            return True
+        except BlockingIOError:
+            os.close(self.fd)
+            self.fd = None
+            return False
+
+    def release(self):
+        if self.fd is not None:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            os.close(self.fd)
+            self.fd = None
+
+
 # ---------- the studio: state shared by the server threads ----------
 
 class Studio:
-    """One lock around every write. rev counts writes per campaign so the board can tell what it has seen."""
+    """Every write happens under self.locked(): a thread lock plus the root's write lock. rev is "<boot>-<n>": n
+    counts writes per campaign, boot changes when the server restarts, so a board tab never mistakes an old rev for
+    the current one."""
 
     def __init__(self, root):
         self.root = pathlib.Path(root)
         self.lock = threading.RLock()
-        self.revs = {}          # key -> int
-        self.digests = {}       # key -> sha256 of campaign.json as last seen
-        self.claude = {}        # key -> [(rev, path_json, value)]
-        self.first_seen = {}    # inbox file -> time first seen unreadable
+        self.write_lock = RootLock(root, "write")
+        self.boot = secrets.token_hex(3)
+        self.revs = {}             # key -> int
+        self.digests = {}          # key -> sha256 of campaign.json as last seen
+        self.claude = {}           # key -> [(n, path_json, value)]
+        self.unreadable_since = {} # inbox file -> when it was first seen unreadable
+        self.seen_order = {}       # inbox file -> when it was first seen (applies in arrival order)
+        self.done = {}             # inbox file -> (mtime_ns, size) handled but could not be removed
+
+    @contextlib.contextmanager
+    def locked(self):
+        with self.lock:
+            self.write_lock.acquire()
+            try:
+                yield
+            finally:
+                self.write_lock.release()
 
     # -- lookup --
     def campaigns(self):
@@ -80,8 +131,9 @@ class Studio:
         p = pathlib.Path(folder) / "campaign.json"
         return core.file_digest(p) if p.is_file() else None
 
-    def rev(self, key, folder):
-        """Bumps rev when campaign.json changed outside this server (a sync tool, a hand edit)."""
+    def _n(self, key, folder):
+        """The write count, bumped when campaign.json changed outside this server (a sync tool, `patch` while no
+        server ran)."""
         d = self._digest(folder)
         if key not in self.revs:
             self.revs[key], self.digests[key] = 1, d
@@ -89,6 +141,18 @@ class Studio:
             self.revs[key] += 1
             self.digests[key] = d
         return self.revs[key]
+
+    def rev(self, key, folder):
+        return f"{self.boot}-{self._n(key, folder)}"
+
+    def _base_n(self, base_rev):
+        """The write count a board's rev refers to; 0 if it came from before a restart."""
+        if isinstance(base_rev, str) and base_rev.startswith(self.boot + "-"):
+            try:
+                return int(base_rev.rsplit("-", 1)[1])
+            except ValueError:
+                return 0
+        return 0
 
     def _write(self, key, folder, campaign):
         core.save(folder, campaign)
@@ -98,46 +162,43 @@ class Studio:
     # -- state for the board --
     def state(self, key, folder):
         with self.lock:
-            return self._state(key, folder)
+            campaign = core.load(folder)
+            return {"key": key, "campaign": campaign, "rev": self.rev(key, folder),
+                    "check": core.check(campaign, folder), "rejected": self._rejected(folder),
+                    "pending": core.pending_content_ops(folder)}
 
-    def _state(self, key, folder):
-        campaign = core.load(folder)
-        rejected = []
-        rdir = pathlib.Path(folder) / "inbox" / "rejected"
+    @staticmethod
+    def _rejected(base):
+        out = []
+        rdir = pathlib.Path(base) / "inbox" / "rejected"
         if rdir.is_dir():
             for p in sorted(rdir.glob("*.json")):
                 r = p.with_name(p.name + ".reason.txt")
-                rejected.append({"name": p.name, "reason": r.read_text(encoding="utf-8") if r.is_file() else ""})
-        return {"key": key, "campaign": campaign, "rev": self.rev(key, folder), "check": core.check(campaign, folder),
-                "rejected": rejected, "pending": core.pending_content_ops(folder)}
+                out.append({"name": p.name, "reason": r.read_text(encoding="utf-8") if r.is_file() else
+                            "הבקשה לא נכנסה."})
+        return out
 
     def summary(self):
         out = []
         for key, folder in self.campaigns().items():
+            venture, slug = key.split("/", 1)
             try:
                 c = core.load(folder)
                 chk = core.check(c, folder)
-                out.append({"key": key, "venture": key.split("/")[0], "slug": key.split("/", 1)[1],
-                            "name": c.get("name") or key, "packed": chk["packed"], "kept": chk["kept"],
-                            "total": chk["total"], "errors": len(chk["errors"]),
-                            "launched": bool((c.get("meta") or {}).get("campaign_id"))})
+                out.append({"key": key, "venture": venture, "slug": slug, "name": c.get("name") or slug,
+                            "packed": chk["packed"], "kept": chk["kept"], "total": chk["total"],
+                            "errors": len(chk["errors"]), "launched": bool((c.get("meta") or {}).get("campaign_id"))})
             except Exception as e:  # one broken campaign must not take the list down
-                out.append({"key": key, "venture": key.split("/")[0], "slug": key.split("/", 1)[1], "name": key,
-                            "broken": f"הקובץ פגום: {e}"})
+                out.append({"key": key, "venture": venture, "slug": slug, "name": slug,
+                            "broken": f"קובץ הקמפיין פגום ({type(e).__name__}). בקש מ-Claude לבדוק אותו."})
         return out
 
     def new_rejections(self):
-        """Creates from Claude that were refused, per venture, so the board can show them."""
+        """Creates from Claude that were refused, per venture, so the board's home page can show them."""
         out = []
-        if not self.root.is_dir():
-            return out
-        for venture in sorted(p for p in self.root.iterdir() if p.is_dir()):
-            rdir = venture.joinpath(*core.CAMPAIGNS_SUB, "inbox", "rejected")
-            if rdir.is_dir():
-                for p in sorted(rdir.glob("*.json")):
-                    r = p.with_name(p.name + ".reason.txt")
-                    out.append({"venture": venture.name, "name": p.name,
-                                "reason": r.read_text(encoding="utf-8") if r.is_file() else ""})
+        for venture in core.ventures(self.root):
+            for r in self._rejected(venture.joinpath(*core.CAMPAIGNS_SUB)):
+                out.append({"venture": venture.name, **r})
         return out
 
     # -- writes --
@@ -146,55 +207,75 @@ class Studio:
         the rest of his edits. Returns (conflicts, failures)."""
         if not isinstance(ops, list) or not ops:
             raise core.PatchError("אין שינויים בבקשה.")
-        with self.lock:
+        with self.locked():
             campaign = core.load(folder)
+            self._n(key, folder)
             touched, failures = [], []
             for op in ops:
                 try:
-                    core.apply_op(campaign, op, "board")
+                    core.apply_op_safe(campaign, op, "board")
                     touched.append(json.dumps(op["path"], ensure_ascii=False))
                 except core.PatchError as e:
                     failures.append(str(e))
-            conflicts = []
-            if base_rev is not None:
-                for rev, pj, value in self.claude.get(key, []):
-                    if rev > base_rev and pj in touched:
-                        conflicts.append({"path": json.loads(pj), "claude_value": value})
+            base_n = self._base_n(base_rev)
+            conflicts = [{"path": json.loads(pj), "claude_value": value}
+                         for n, pj, value in self.claude.get(key, []) if n > base_n and pj in touched]
             if touched:
                 self._write(key, folder, campaign)
             return conflicts, failures
 
     def pack(self, key, folder, base_rev):
-        with self.lock:
+        with self.locked():
             if base_rev != self.rev(key, folder):
                 return "הקמפיין השתנה בזמן שהסתכלת (אולי מהשיחה). בדוק שוב ולחץ ארוז."
             campaign = core.load(folder)
-            chk = core.check(campaign, folder)
-            if chk["errors"]:
+            if core.check(campaign, folder)["errors"]:
                 return "יש עוד מה לתקן לפני שאורזים."
             campaign["packed_at"] = now_iso()
             campaign["packed_hash"] = core.content_hash(campaign, folder)
             self._write(key, folder, campaign)
             return None
 
+    # -- the inbox --
+    @staticmethod
+    def _sig(path):
+        try:
+            st = path.stat()
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+
+    def _consume(self, path):
+        """Removes a handled inbox file. If it cannot be removed (a sync tool or antivirus holds it), it is remembered,
+        so it is never applied twice."""
+        try:
+            path.unlink()
+        except OSError:
+            self.done[str(path)] = self._sig(path)
+        self.seen_order.pop(str(path), None)
+        self.unreadable_since.pop(str(path), None)
+
     def _reject(self, path, reason):
-        rdir = path.parent / "rejected"
-        rdir.mkdir(exist_ok=True)
-        target = rdir / path.name
-        if target.exists():
-            target = rdir / f"{path.stem}-{secrets.token_hex(3)}{path.suffix}"
-        shutil.move(str(path), target)
-        target.with_name(target.name + ".reason.txt").write_text(reason, encoding="utf-8")
-        self.first_seen.pop(str(path), None)
+        try:
+            rdir = path.parent / "rejected"
+            rdir.mkdir(exist_ok=True)
+            target = rdir / path.name
+            if target.exists():
+                target = rdir / f"{path.stem}-{secrets.token_hex(3)}{path.suffix}"
+            shutil.copyfile(path, target)
+            target.with_name(target.name + ".reason.txt").write_text(reason, encoding="utf-8")
+        except OSError as e:
+            print(f"studio: could not record a rejected request {path}: {e}", file=sys.stderr, flush=True)
+        self._consume(path)
 
     def _ready(self, path):
         """The parsed patch, None to wait, or raises PatchError. Unreadable files get a grace period (a sync tool or
         Cowork may still be writing them)."""
         data = core.read_patch(path)
         if data is not None:
-            self.first_seen.pop(str(path), None)
+            self.unreadable_since.pop(str(path), None)
             return data
-        t = self.first_seen.setdefault(str(path), time.monotonic())
+        t = self.unreadable_since.setdefault(str(path), time.monotonic())
         if time.monotonic() - t > UNREADABLE_GRACE:
             raise core.PatchError("הקובץ לא נקרא כ-JSON תקין גם אחרי 10 שניות.")
         return None
@@ -202,21 +283,37 @@ class Studio:
     def _inbox_files(self, inbox):
         if not inbox.is_dir():
             return []
-        files = [p for p in inbox.iterdir() if p.is_file() and p.suffix == ".json" and not core.is_foreign(p.name)]
-        for p in files:
-            self.first_seen.setdefault("order:" + str(p), time.monotonic())
-        return sorted(files, key=lambda p: (self.first_seen["order:" + str(p)], p.name))
+        files = []
+        for p in inbox.iterdir():
+            if not core.is_patch_file(p):
+                continue
+            if str(p) in self.done:
+                if self.done[str(p)] == self._sig(p):
+                    continue          # already handled; only its removal failed
+                del self.done[str(p)]
+            files.append(p)
+            self.seen_order.setdefault(str(p), time.monotonic())
+        return sorted(files, key=lambda p: (self.seen_order[str(p)], p.name))
 
     def apply_inboxes(self):
-        """Creates from each venture's campaigns/inbox, then edits from each campaign's inbox."""
-        with self.lock:
-            for venture in sorted(p for p in self.root.iterdir() if p.is_dir()) if self.root.is_dir() else []:
+        """Creates from each venture's campaigns/inbox, then edits from each campaign's inbox. A failure in one place
+        is reported and skipped; it never stops the rest."""
+        with self.locked():
+            for venture in core.ventures(self.root):
                 base = venture.joinpath(*core.CAMPAIGNS_SUB)
                 for p in self._inbox_files(base / "inbox"):
                     self._apply_create(base, p)
             for key, folder in self.campaigns().items():
-                for p in self._inbox_files(pathlib.Path(folder) / "inbox"):
-                    self._apply_edit(key, folder, p)
+                try:
+                    files = self._inbox_files(pathlib.Path(folder) / "inbox")
+                    if files:
+                        campaign = core.load(folder)
+                        self._n(key, folder)
+                except Exception as e:  # a broken campaign.json: its requests wait, others go on
+                    print(f"studio: {key}: {e}", file=sys.stderr, flush=True)
+                    continue
+                for p in files:
+                    campaign = self._apply_edit(key, folder, campaign, p)
 
     def _apply_create(self, base, path):
         try:
@@ -224,7 +321,7 @@ class Studio:
             if data is None:
                 return
             slug = data.get("create")
-            if not isinstance(slug, str) or not core.SLUG_RE.match(slug):
+            if not isinstance(slug, str) or not core.SLUG_RE.match(slug) or slug.lower() in core.RESERVED_SLUGS:
                 raise core.PatchError("שם תיקייה לא תקין לקמפיין (אותיות, מספרים, מקף).")
             folder = base / slug
             if (folder / "campaign.json").exists():
@@ -232,31 +329,35 @@ class Studio:
             campaign = core._new_campaign(data)
             (folder / "images").mkdir(parents=True, exist_ok=True)
             core.save(folder, campaign)
-            path.unlink()
-            self.first_seen.pop("order:" + str(path), None)
+            self._consume(path)
         except core.PatchError as e:
             self._reject(path, str(e))
+        except Exception as e:
+            self._reject(path, f"הבקשה פגומה ולא נכנסה ({type(e).__name__}).")
 
-    def _apply_edit(self, key, folder, path):
+    def _apply_edit(self, key, folder, campaign, path):
+        """Returns the campaign as it is after this file."""
         try:
             data = self._ready(path)
             if data is None:
-                return
-            campaign = core.load(folder)
+                return campaign
             new, touched = core.apply_ops(campaign, data.get("ops"), "claude")
             self._write(key, folder, new)
-            rev = self.revs[key]
+            n = self.revs[key]
             log = self.claude.setdefault(key, [])
             for t in touched:
-                log.append((rev, json.dumps(t, ensure_ascii=False), core.get_path(new, t)))
+                log.append((n, json.dumps(t, ensure_ascii=False), core.get_path(new, t)))
             del log[:-200]
-            path.unlink()
-            self.first_seen.pop("order:" + str(path), None)
+            self._consume(path)
+            return new
         except core.PatchError as e:
             self._reject(path, str(e))
+        except Exception as e:
+            self._reject(path, f"הבקשה פגומה ולא נכנסה ({type(e).__name__}).")
+        return campaign
 
-    def dismiss(self, folder, name):
-        rdir = pathlib.Path(folder) / "inbox" / "rejected"
+    def dismiss(self, base, name):
+        rdir = pathlib.Path(base) / "inbox" / "rejected"
         p = core.inside(rdir, name)
         if p and p.is_file():
             p.unlink()
@@ -311,6 +412,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return None
 
     def do_GET(self):
+        try:
+            self._get()
+        except Exception as e:  # say what broke instead of dropping the connection
+            print(f"studio: GET {self.path}: {e}", file=sys.stderr, flush=True)
+            self._send(500, {"error": f"שגיאה בלוח ({type(e).__name__}). נסה שוב, ואם זה חוזר, ספר ל-Claude."})
+
+    def do_POST(self):
+        try:
+            self._post()
+        except Exception as e:
+            print(f"studio: POST {self.path}: {e}", file=sys.stderr, flush=True)
+            self._send(500, {"error": f"שגיאה בלוח ({type(e).__name__}). השינוי לא נשמר. נסה שוב."})
+
+    def _get(self):
         if not self._host_ok():
             return self._send(403, {"error": "host"})
         path, q = self._query()
@@ -328,7 +443,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 return self._send(200, self.studio.state(key, folder))
             except Exception as e:  # a broken file: say so instead of looking disconnected
-                return self._send(500, {"error": f"קובץ הקמפיין פגום: {e}"})
+                return self._send(500, {"error": f"קובץ הקמפיין פגום ולא נפתח ({type(e).__name__}). בקש מ-Claude לבדוק אותו."})
         if path.startswith("/files/"):
             parts = urllib.parse.unquote(path[len("/files/"):]).split("/", 2)
             if len(parts) == 3:
@@ -340,7 +455,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         self._send(404, {"error": "not found"})
 
-    def do_POST(self):
+    def _post(self):
         if not self._host_ok() or self.headers.get("X-Studio") != "1":
             return self._send(403, {"error": "forbidden"})
         path, q = self._query()
@@ -415,6 +530,10 @@ def serve(root, port, do_open):
         if do_open:
             open_browser(url)
         return 0
+    server_lock = RootLock(root, "server")
+    if not server_lock.acquire(blocking=False):
+        print(f"studio: another board server already serves {root}", file=sys.stderr, flush=True)
+        return 2
     studio = Studio(root)
     try:
         server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
@@ -465,11 +584,25 @@ def cmd_new(folder, src, name):
     return 0
 
 
-def cmd_patch(folder, src, port):
-    """Validates against the current file, writes the request into inbox/, and applies it here if no server is
-    running. Either way the result is printed."""
-    folder = pathlib.Path(folder)
-    raw = sys.stdin.read() if src == "-" else pathlib.Path(src).read_text(encoding="utf-8")
+def campaign_root(folder):
+    """The root that holds the ventures, from a campaign folder <root>/<venture>/שיווק/קמפיינים/<slug>; None if the
+    folder is not laid out that way."""
+    folder = pathlib.Path(folder).resolve()
+    if len(folder.parents) < 4 or (folder.parents[1].name, folder.parents[0].name) != core.CAMPAIGNS_SUB:
+        return None
+    return folder.parents[3]
+
+
+def cmd_patch(folder, src, port=None):
+    """Validates against the current file, writes the request into inbox/, and waits for the board server to apply
+    it — or applies it here, under the same lock, when no server serves this root. Prints what really happened."""
+    folder = pathlib.Path(folder).resolve()
+    root = campaign_root(folder)
+    if not root or not (folder / "campaign.json").is_file():
+        print(f"studio: {folder} is not a campaign folder (<root>/<venture>/שיווק/קמפיינים/<slug>/campaign.json)",
+              file=sys.stderr)
+        return 2
+    raw = sys.stdin.read() if src == "-" else pathlib.Path(src).read_text(encoding="utf-8-sig")
     data = json.loads(raw)
     ops = data.get("ops") if isinstance(data, dict) else data
     try:
@@ -477,34 +610,31 @@ def cmd_patch(folder, src, port):
     except core.PatchError as e:
         print(f"studio: rejected — {e}", file=sys.stderr)
         return 1
-    folder = folder.resolve()
-    root = folder.parents[3]
     inbox = folder / "inbox"
     inbox.mkdir(exist_ok=True)
     name = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}.json"
     tmp = inbox / f".{name}.tmp"
     tmp.write_text(json.dumps({"format": core.PATCH_FORMAT, "ops": ops}, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, inbox / name)
-    running = whoami(port)
-    if running and pathlib.Path(running.get("root", "")).resolve() == root:
-        for _ in range(20):
+    probe = RootLock(root, "server")
+    server_running = not probe.acquire(blocking=False)
+    if not server_running:
+        probe.release()
+        Studio(root).apply_inboxes()
+    else:
+        for _ in range(40):
             if not (inbox / name).exists():
                 break
             time.sleep(0.25)
-        else:
-            print("studio: waiting in the inbox; the board server will apply it")
-            return 0
-    else:
-        Studio(root).apply_inboxes()
     rejected = inbox / "rejected" / name
     if rejected.exists():
-        print("studio: rejected — " + rejected.with_name(name + ".reason.txt").read_text(encoding="utf-8"),
-              file=sys.stderr)
+        reason = rejected.with_name(name + ".reason.txt")
+        print("studio: rejected — " + (reason.read_text(encoding="utf-8") if reason.exists() else "?"), file=sys.stderr)
         return 1
     if (inbox / name).exists():
-        print("studio: not applied — the request is still in the inbox", file=sys.stderr)
-        return 1
-    print("studio: applied" + ("" if running else " (no board server running)"))
+        print("studio: waiting in the inbox — the board server has not applied it yet", file=sys.stderr)
+        return 3
+    print("studio: applied" + (" by the board server" if server_running else " (no board server running)"))
     return 0
 
 
@@ -593,7 +723,6 @@ def main(argv):
     ap.add_argument("--open", action="store_true")
     ap.add_argument("--name", default="")
     ap.add_argument("--from", dest="from_file")
-    ap.add_argument("--inbox-content-ops", type=int, default=None)
     a = ap.parse_args(argv)
     root = a.root or default_root()
 
@@ -622,7 +751,7 @@ def main(argv):
         print(json.dumps(r, ensure_ascii=False, indent=2))
         return 1 if r["errors"] else 0
     if a.command == "plan":
-        p, errs = core.plan(campaign, folder, a.inbox_content_ops)
+        p, errs = core.plan(campaign, folder)
         print(json.dumps(p if not errs else {"errors": errs}, ensure_ascii=False, indent=2))
         return 1 if errs else 0
     return 2

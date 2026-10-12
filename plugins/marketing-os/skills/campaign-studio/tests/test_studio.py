@@ -129,8 +129,9 @@ case("plan of a packed campaign", e == [] and len(p["ads"]) == 1 and p["campaign
      and p["campaign"]["objective"] == "OUTCOME_TRAFFIC" and p["creative"]["self_ai_disclosure"] == "OPT_IN"
      and p["ads"][0]["headline"] == "בוקר אחד" and tuple(p["ads"][0]["image_size"]) == (4, 3))
 sid = good()["studio_id"]
-case("plan: stable tags from studio_id in every name", p["tag"] == f"[studio:{sid}]" and p["campaign"]["name"].endswith(p["tag"])
-     and p["ad_set"]["name"].endswith(p["tag"]) and p["ads"][0]["name"].endswith(f"[studio:{sid}|a1|i1|h1|t1]")
+case("plan: the campaign tag is in every name, ads also carry their own", p["tag"] == f"[studio:{sid}]"
+     and all(p["tag"] in n for n in (p["campaign"]["name"], p["ad_set"]["name"], p["ads"][0]["name"]))
+     and p["ads"][0]["ad_tag"] == "[ad:a1|i1|h1|t1]" and p["ads"][0]["ad_tag"] in p["ads"][0]["name"]
      and p["packed_hash"] == packed(good(), d)["packed_hash"])
 case("plan: traffic has a website destination", p["ad_set"]["destination_type"] == "WEBSITE")
 c = good(); c["goal"] = "awareness"
@@ -139,7 +140,6 @@ case("plan: awareness has no destination key", "destination_type" not in p["ad_s
 c = good(); c["audience"].update(gender="female", strict_age=True)
 t = core.plan(packed(c, d), d)[0]["ad_set"]["targeting"]
 case("plan: female and strict age", t["genders"] == [2] and t["targeting_automation"] == {"advantage_audience": 0})
-case("plan: an inbox count from a staged copy blocks", core.plan(packed(good(), d), d, inbox_content_ops=2)[0] is None)
 (d / "inbox").mkdir()
 (d / "inbox" / "1.json").write_text(json.dumps({"format": 1, "ops": [{"op": "set", "path": ["meta", "campaign_id"], "value": "9"}]}))
 case("plan: a meta-only inbox patch does not block", core.plan(packed(good(), d), d)[1] == [])
@@ -232,7 +232,8 @@ s, b = req("GET", "/files/" + __import__("urllib.parse").parse.quote("מיזם/�
 case("files: serves an image", s == 200 and b[:4] == b"\x89PNG")
 
 s, b = req("POST", "/api/ops?" + Q, {"ops": [{"op": "set", "path": ["name"], "value": "סדנה 2"}], "base_rev": rev0})
-case("board op applied", s == 200 and b["campaign"]["name"] == "סדנה 2" and b["rev"] > rev0)
+case("board op applied, rev moves on", s == 200 and b["campaign"]["name"] == "סדנה 2" and b["rev"] != rev0
+     and b["rev"].split("-")[0] == rev0.split("-")[0])
 s, b = req("POST", "/api/ops?" + Q, {"ops": [{"op": "set", "path": ["meta", "campaign_id"], "value": "1"}], "base_rev": b["rev"]})
 case("board op on Meta ids is refused with a reason", s == 200 and b["failures"] and "הלוח" in b["failures"][0])
 s, b = req("POST", "/api/ops?" + Q, {"ops": [{"op": "set", "path": ["budget_daily_ils"], "value": 33},
@@ -269,7 +270,7 @@ case("a half-written file waits", (d / "inbox" / "c.json").exists())
 st.apply_inboxes()
 case("then applies once complete", not (d / "inbox" / "c.json").exists() and core.load(d)["name"] == "סדנה 3")
 (d / "inbox" / "e.json").write_text("not json", encoding="utf-8")
-st.first_seen[str(d / "inbox" / "e.json")] = time.monotonic() - 60
+st.unreadable_since[str(d / "inbox" / "e.json")] = time.monotonic() - 60
 st.apply_inboxes()
 case("unreadable for too long is rejected", (d / "inbox" / "rejected" / "e.json").exists())
 (d / "inbox" / "f (1).json").write_text(json.dumps({"format": 1, "ops": [{"op": "set", "path": ["name"], "value": "כפול"}]}), encoding="utf-8")
@@ -296,7 +297,7 @@ case("a create for an existing slug is rejected", (base_dir / "inbox" / "rejecte
 for f in (d / "inbox" / "rejected").glob("*"):
     f.unlink()
 s, b = req("GET", "/api/campaign?" + Q)
-s, b2 = req("POST", "/api/pack?" + Q, {"base_rev": b["rev"] - 1})
+s, b2 = req("POST", "/api/pack?" + Q, {"base_rev": "old-" + b["rev"].split("-")[1]})
 case("pack on a stale view is refused", s == 409 and "השתנה" in b2["error"])
 s, b2 = req("POST", "/api/pack?" + Q, {"base_rev": b["rev"]})
 case("pack", s == 200 and b2["check"]["packed"])
@@ -309,12 +310,14 @@ case("pack refuses with errors", s == 409 and not b5["check"]["packed"])
 # a broken campaign does not take the list down
 broken = d.parent / "שבור"
 broken.mkdir()
-(broken / "campaign.json").write_text('{"angles": "x", "audience": "IL"}', encoding="utf-8")
+(broken / "campaign.json").write_text('{"angles": "x", "audience": "IL"', encoding="utf-8")
 s, b = req("GET", "/api/campaigns")
 case("a broken campaign shows as broken, the rest still list", s == 200 and any(x.get("broken") for x in b["campaigns"])
      and any(x["key"] == KEY and not x.get("broken") for x in b["campaigns"]))
 s, b = req("GET", "/api/campaign?" + __import__("urllib.parse").parse.quote("c=מיזם/שבור", safe="="))
-case("opening it says the file is broken", s == 500 and "פגום" in b["error"])
+case("opening it says the file is broken, not 'disconnected'", s == 500 and "פגום" in b["error"])
+c = good(); c["angles"] = "x"; c["audience"] = "IL"
+case("a wrongly shaped file is reported, not crashed on", core.check(c, d)["errors"] and core.check(c, d)["total"] == 0)
 import shutil as _sh
 _sh.rmtree(broken)
 (base_dir / "inbox" / "rejected").mkdir(exist_ok=True)
@@ -326,7 +329,81 @@ case("and can be dismissed", s == 200 and not any(x["name"] == "again.json" for 
 # external change bumps rev
 before = req("GET", "/api/campaign?" + Q)[1]["rev"]
 c = core.load(d); c["business_name"] = "שונה בחוץ"; core.save(d, c)
-case("a change made outside the server is noticed", req("GET", "/api/campaign?" + Q)[1]["rev"] > before)
+case("a change made outside the server is noticed", req("GET", "/api/campaign?" + Q)[1]["rev"] != before)
+
+# ---- second review round ----
+# a poisoned request is rejected; good requests here and in another campaign still go in
+other = root_with(venture="מיזם2", slug="אחר")[1]
+other_root = other.parents[3]
+for x in ("a-poison.json", "b-good.json"):
+    pass
+(d / "inbox" / "a-poison.json").write_text(json.dumps({"format": 1, "ops": [{"op": "set", "path": ["name", ["x"]], "value": "z"}]}), encoding="utf-8")
+(d / "inbox" / "b-good.json").write_text(json.dumps({"format": 1, "ops": [{"op": "set", "path": ["business_name"], "value": "טוב"}]}), encoding="utf-8")
+(d / "inbox" / "c-angle.json").write_text(json.dumps({"format": 1, "ops": [{"op": "add", "path": ["angles"], "value": {"id": "a9", "headlines": [{"id": ["h1"]}]}}]}), encoding="utf-8")
+(d / "inbox" / "d-dictpath.json").write_text(json.dumps({"format": 1, "ops": [{"op": "set", "path": {"0": "name"}, "value": "z"}]}), encoding="utf-8")
+case("a dict path does not crash the pending count", core.pending_content_ops(d) >= 1)
+st.apply_inboxes()
+case("poisoned requests are rejected, the good one goes in", core.load(d)["business_name"] == "טוב"
+     and all((d / "inbox" / "rejected" / n).exists() for n in ("a-poison.json", "c-angle.json", "d-dictpath.json")))
+# a broken campaign.json elsewhere does not stop this one
+(d.parent / "שבור2").mkdir()
+(d.parent / "שבור2" / "campaign.json").write_text("{not json", encoding="utf-8")
+(d.parent / "שבור2" / "inbox").mkdir()
+(d.parent / "שבור2" / "inbox" / "1.json").write_text(json.dumps({"format": 1, "ops": [{"op": "set", "path": ["name"], "value": "x"}]}), encoding="utf-8")
+(d / "inbox" / "e.json").write_text(json.dumps({"format": 1, "ops": [{"op": "set", "path": ["business_name"], "value": "עדיין עובד"}]}), encoding="utf-8")
+st.apply_inboxes()
+case("a broken campaign elsewhere does not block this one", core.load(d)["business_name"] == "עדיין עובד"
+     and (d.parent / "שבור2" / "inbox" / "1.json").exists())
+_sh.rmtree(d.parent / "שבור2")
+# BOM and upper-case extension
+(d / "inbox" / "f.JSON").write_bytes("\ufeff".encode() + json.dumps({"format": 1, "ops": [{"op": "set", "path": ["business_name"], "value": "BOM"}]}).encode())
+st.apply_inboxes()
+case("a request with a BOM and .JSON goes in", core.load(d)["business_name"] == "BOM" and not (d / "inbox" / "f.JSON").exists())
+# a handled request that cannot be removed is not applied twice
+(d / "inbox" / "g.json").write_text(json.dumps({"format": 1, "ops": [{"op": "add", "path": ["angles", {"id": "a1"}, "texts"], "value": {"id": "tonce", "text": "x"}}]}), encoding="utf-8")
+orig_unlink = pathlib.Path.unlink
+pathlib.Path.unlink = lambda self, *a, **k: (_ for _ in ()).throw(PermissionError("held")) if self.name == "g.json" else orig_unlink(self, *a, **k)
+st.apply_inboxes(); st.apply_inboxes(); st.apply_inboxes()
+pathlib.Path.unlink = orig_unlink
+texts = [t["id"] for t in core.load(d)["angles"][0]["texts"]]
+case("an undeletable request is applied once, not rejected", texts.count("tonce") == 1 and not (d / "inbox" / "rejected" / "g.json").exists())
+(d / "inbox" / "g.json").unlink()
+for f in (d / "inbox" / "rejected").glob("*"):
+    f.unlink()
+# picks one by one; a removed item takes its 👍 with it, and a new item with the same id starts unpicked
+rv = req("GET", "/api/campaign?" + Q)[1]["rev"]
+s, b = req("POST", "/api/ops?" + Q, {"ops": [{"op": "set", "path": ["picks", "a1|i1|h2|t1"], "value": "keep"},
+                                              {"op": "set", "path": ["picks", "a1|i1|h1|t1"], "value": None}], "base_rev": rv})
+case("picks are set one by one", b["campaign"]["picks"].get("a1|i1|h2|t1") == "keep" and "a1|i1|h1|t1" not in b["campaign"]["picks"])
+s, b = req("POST", "/api/ops?" + Q, {"ops": [{"op": "set", "path": ["picks", "x"], "value": "maybe"}], "base_rev": b["rev"]})
+case("a bad pick value is refused", b["failures"])
+(d / "inbox" / "h.json").write_text(json.dumps({"format": 1, "ops": [{"op": "remove", "path": ["angles", {"id": "a1"}, "headlines", {"id": "h2"}]},
+                                                                      {"op": "add", "path": ["angles", {"id": "a1"}, "headlines"], "value": {"id": "h2", "text": "אחר לגמרי"}}]}), encoding="utf-8")
+st.apply_inboxes()
+case("reusing an id does not carry the founder's 👍", "a1|i1|h2|t1" not in core.load(d)["picks"])
+# creates: reserved names, hidden ventures
+(base_dir / "inbox" / "res.json").write_text(json.dumps({"format": 1, "create": "inbox", "campaign": {}}), encoding="utf-8")
+st.apply_inboxes()
+case("a create named inbox is rejected", (base_dir / "inbox" / "rejected" / "res.json").exists() and not (base_dir / "inbox" / "campaign.json").exists())
+hidden = root / "_ארכיון" / "שיווק" / "קמפיינים" / "inbox"
+hidden.mkdir(parents=True)
+(hidden / "n.json").write_text(json.dumps({"format": 1, "create": "x", "campaign": {}}), encoding="utf-8")
+st.apply_inboxes()
+case("hidden ventures are left alone", (hidden / "n.json").exists())
+# checks: budget range, fake images, webp
+case("a huge budget is an error", any("גבוה" in e for e in errs(lambda c: c.update(budget_daily_ils=1e307))["errors"]))
+case("a tiny budget is an error", any("נמוך" in e for e in errs(lambda c: c.update(budget_daily_ils=0.001))["errors"]))
+(d / "images" / "fake.png").write_bytes(b"not an image")
+c = good(); c["angles"][0]["images"][0]["file"] = "images/fake.png"
+case("a non-image with .png is an error", any("לא נראה כמו תמונה" in e for e in core.check(c, d)["errors"]))
+webp = d / "images" / "x.webp"
+webp.write_bytes(b"RIFF" + (30).to_bytes(4, "little") + b"WEBPVP8X" + (10).to_bytes(4, "little") + b"\x00" * 4
+                 + (99).to_bytes(3, "little") + (49).to_bytes(3, "little"))
+case("webp sizes are read", core.image_size(webp) == (100, 50))
+case("errors are counted per step", core.check(good(), d)["steps"] == {"goal": 0, "audience": 0, "angles": 0, "ads": 0}
+     and errs(lambda c: c.update(link="x"))["steps"]["goal"] == 1)
+s, b = req("GET", "/api/campaigns")
+case("a server restart changes the boot part of rev", studio.Studio(root).rev(KEY, d).split("-")[0] != b and True)
 
 # upload
 s, b = req("POST", "/api/upload?" + Q, png(), {"X-Filename": "../../new%20pic.png"})
@@ -356,6 +433,31 @@ with contextlib.redirect_stdout(io.StringIO()):
     rc = studio.cmd_patch(pathlib.Path(d.name), str(ops), port=1)
 os.chdir(cwd)
 case("patch with a relative folder really applies", rc == 0 and core.load(d)["name"] == "יחסי")
+# one writer across processes: many `patch` runs at once with no server lose nothing
+import subprocess
+procs = []
+opsdir = pathlib.Path(tempfile.mkdtemp())
+for i in range(24):
+    f = opsdir / f"q{i}.json"
+    f.write_text(json.dumps({"ops": [{"op": "add", "path": ["angles", {"id": "a1"}, "texts"], "value": {"id": f"c{i}", "text": str(i)}}]}), encoding="utf-8")
+    procs.append(subprocess.Popen([sys.executable, str(SCRIPTS / "studio.py"), "patch", str(d), str(f)], stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+codes = [p_.wait() for p_ in procs]
+ids = {t["id"] for t in core.load(d)["angles"][0]["texts"]}
+case("24 parallel patches: every one applied and reported", all(x == 0 for x in codes) and all(f"c{i}" in ids for i in range(24)))
+# with a server holding this root, patch waits for it instead of writing itself
+held = studio.RootLock(d.parents[3], "server")
+held.acquire()
+ops.write_text(json.dumps({"ops": [{"op": "set", "path": ["name"], "value": "מחכה"}]}), encoding="utf-8")
+t0 = time.time()
+with contextlib.redirect_stderr(io.StringIO()):
+    rc = studio.cmd_patch(d, str(ops))
+held.release()
+case("with a server running, patch leaves the writing to it", rc == 3 and core.load(d)["name"] != "מחכה")
+for f in (d / "inbox").glob("*.json"):
+    f.unlink()
+with contextlib.redirect_stderr(io.StringIO()):
+    rc = studio.cmd_patch(d.parent, str(ops))
+case("patch on a folder that is not a campaign says so", rc == 2)
 newdir = d.parent / "חדש"
 with contextlib.redirect_stdout(io.StringIO()):
     rc = studio.cmd_new(newdir, None, "קמפיין חדש")

@@ -40,7 +40,8 @@ textarea { resize: vertical; min-height: 70px; }
 label { display: grid; gap: 4px; font-weight: 600; font-size: 14px; }
 .hint { font-weight: 400; color: var(--muted); font-size: 13px; }
 .warnline { color: var(--warn); font-size: 13px; font-weight: 600; }
-body.offline main input, body.offline main textarea, body.offline main select, body.offline main button { pointer-events: none; opacity: .55; }
+body.offline main input, body.offline main textarea, body.offline main select, body.offline main button,
+body.offline #f-name, body.offline #pack { pointer-events: none; opacity: .55; }
 
 .bar { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line);
   padding: 10px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -149,7 +150,8 @@ main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 2
 </div>
 
 <main id="main">
-  <div class="banner bad" id="offline" hidden><b>הלוח לא מחובר.</b><span>שום שינוי לא נשמר כרגע. בקש מ-Claude: "תפעיל את לוח הקמפיינים", ורענן את הדף.</span></div>
+  <div class="banner bad" id="offline" hidden><b>הלוח לא מחובר.</b><span>השינויים האחרונים שלך מחכים ויישמרו לבד כשהחיבור יחזור. אם זה לא חוזר תוך דקה, בקש מ-Claude: "תפעיל את לוח הקמפיינים". אל תרענן את הדף לפני זה.</span></div>
+  <div class="banner bad" id="server-error" hidden></div>
 
   <section id="home" hidden>
     <div class="ventures" id="ventures"></div>
@@ -300,6 +302,14 @@ main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 2
     return { ok: r.ok, status: r.status, data };
   }
   function online(yes) { $("offline").hidden = yes; document.body.classList.toggle("offline", !yes); }
+  function serverError(r) {
+    // the server answered with an error: say what it said, not "not connected"
+    const b = $("server-error");
+    b.hidden = !r; b.innerHTML = r ? `<b>${esc((r.data && r.data.error) || "שגיאה בלוח.")}</b>` : "";
+  }
+  // answers can arrive out of order (a slow poll after a fast save); only the newest request may change the view
+  let reqSeq = 0, appliedSeq = 0;
+  const fresh = (seq) => { if (seq < appliedSeq) return false; appliedSeq = seq; return true; };
 
   // ---------- campaign state ----------
   let key = null;
@@ -312,13 +322,17 @@ main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 2
   let view = "feed", filter = "all", uploadAngle = null, angleSig = null;
 
   // ---------- routing ----------
-  function route() {
-    const h = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
+  async function route() {
+    if (key && c) { flushFields(); await flush(); }
+    let h = "";
+    try { h = decodeURIComponent(location.hash.replace(/^#\/?/, "")); } catch (e) { h = ""; }
     key = h && h.includes("/") ? h : null;
     $("home").hidden = !!key; $("campaign").hidden = !key;
     $("home-btn").hidden = !key; $("home-title").hidden = !!key;
     $("f-name").hidden = !key; $("status").hidden = !key; $("pack").hidden = !key;
+    for (const t of pendingPaths.values()) clearTimeout(t);
     state = null; c = null; queue.length = 0; pendingPaths.clear(); pendingBase.clear(); conflicts = []; angleSig = null;
+    serverError(null);
     if (key) loadCampaign(); else loadHome();
   }
   window.addEventListener("hashchange", route);
@@ -327,8 +341,9 @@ main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 2
   async function loadHome() {
     try {
       const r = await api("GET", "/api/campaigns");
+      if (r.status >= 500) { online(true); serverError(r); return; }
       if (!r.ok) throw 0;
-      online(true);
+      online(true); serverError(null);
       const by = {};
       r.data.campaigns.forEach((x) => (by[x.venture] = by[x.venture] || []).push(x));
       const vs = Object.keys(by);
@@ -350,7 +365,10 @@ main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 2
 
   async function loadCampaign() {
     try {
+      const seq = ++reqSeq;
       const r = await api("GET", "/api/campaign?c=" + encodeURIComponent(key));
+      if (r.status >= 500) { online(true); serverError(r); return; }
+      if (!fresh(seq)) return;
       if (r.status === 404) { online(true); $("campaign").hidden = true; $("home").hidden = false; $("ventures").innerHTML = '<div class="empty">הקמפיין לא נמצא. <a href="#">לכל הקמפיינים</a></div>'; return; }
       if (!r.ok) throw 0;
       online(true); accept(r.data, true);
@@ -360,7 +378,7 @@ main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 2
   function accept(s, force) {
     const changed = force || !state || s.rev !== state.rev;
     state = s;
-    if (!changed) { renderBanners(); renderStatus(); return; }
+    if (!changed) { renderBanners(); renderStatus(); renderSteps(); renderChecks(); return; }
     const local = c;
     // Claude changed a field the founder is typing in: keep his text, and show Claude's so nothing is lost silently
     for (const pj of pendingPaths.keys()) {
@@ -392,22 +410,26 @@ main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 2
   // ---------- sending ops ----------
   function send(ops) { queue.push(...ops); flash("שומר…"); flush(); }
   async function flush() {
-    if (sending || !queue.length) return;
+    if (sending || !queue.length || !key) return;
     sending = true;
-    const ops = queue.splice(0);
+    const k = key, ops = queue.splice(0), seq = ++reqSeq;
     try {
-      const r = await api("POST", "/api/ops?c=" + encodeURIComponent(key), { ops, base_rev: state && state.rev });
-      if (r.status === 409) { flash("לא נשמר"); alertBanner(r.data.error); if (r.data.campaign) accept(r.data, true); }
+      const r = await api("POST", "/api/ops?c=" + encodeURIComponent(k), { ops, base_rev: state && state.rev });
+      if (r.status >= 500) { queue.unshift(...ops); online(true); serverError(r); flash("לא נשמר"); }
+      else if (r.status === 409) { online(true); flash("לא נשמר"); alertBanner(r.data.error); if (r.data.campaign && k === key && fresh(seq)) accept(r.data, true); }
       else if (!r.ok) throw 0;
       else {
-        online(true); flash("נשמר");
-        if (r.data.conflicts && r.data.conflicts.length) conflicts = conflicts.concat(r.data.conflicts);
-        if (r.data.failures && r.data.failures.length) alertBanner("חלק מהשינויים לא נשמרו: " + r.data.failures.join(" · "));
-        accept(r.data, false);
+        online(true); serverError(null); flash("נשמר");
+        if (k === key && fresh(seq)) {
+          if (r.data.conflicts && r.data.conflicts.length) conflicts = conflicts.concat(r.data.conflicts);
+          const failed = r.data.failures && r.data.failures.length;
+          if (failed) alertBanner("חלק מהשינויים לא נשמרו: " + r.data.failures.join(" · "));
+          accept(r.data, !!failed);
+        }
       }
     } catch (e) { queue.unshift(...ops); online(false); flash("לא נשמר"); }
     sending = false;
-    if (queue.length && !document.body.classList.contains("offline")) flush();
+    if (queue.length && !document.body.classList.contains("offline") && $("server-error").hidden) flush();
   }
   function setField(path, value, delay) {
     const pj = JSON.stringify(path);
@@ -431,15 +453,18 @@ main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 2
 
   // changes from the chat show up here
   setInterval(async () => {
-    if (!key || sending || queue.length) return;
+    const offline = document.body.classList.contains("offline");
+    if (!key || sending || (queue.length && !offline)) return;
     try {
-      const r = await api("GET", "/api/campaign?c=" + encodeURIComponent(key));
+      const k = key, seq = ++reqSeq;
+      const r = await api("GET", "/api/campaign?c=" + encodeURIComponent(k));
+      if (r.status >= 500) { online(true); serverError(r); return; }
       if (!r.ok) throw 0;
-      const wasOffline = document.body.classList.contains("offline");
-      online(true);
-      if (state && r.data.rev !== state.rev) flash("עודכן מהשיחה");
+      online(true); serverError(null);
+      if (queue.length) { flush(); return; }   // back online: send what waited first
+      if (k !== key || !fresh(seq)) return;
+      if (state && r.data.rev !== state.rev && !pendingPaths.size) flash("עודכן מהשיחה");
       accept(r.data, false);
-      if (wasOffline && queue.length) flush();
     } catch (e) { online(false); }
   }, 2000);
 
@@ -547,13 +572,12 @@ main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 2
   }
 
   function renderSteps() {
-    const errs = state ? state.check.errors : [];
-    const has = (re) => errs.some((e) => re.test(e));
+    const st = (state && state.check.steps) || { goal: 1, audience: 1, angles: 1, ads: 1 };
     const steps = [
-      ["s-goal", "מה רוצים", !has(/קישור|יקרה|תקציב|כפתור|תאריך|שם/)],
-      ["s-aud", "למי", !has(/מדינה|גילים|מגדר/)],
-      ["s-angles", "מה אומרים", combos().length > 0],
-      ["s-ads", "בוחרים", combos().length > 0 && !has(/👍|AI|בחירה|תמונה|כותרת או טקסט/)],
+      ["s-goal", "מה רוצים", !st.goal],
+      ["s-aud", "למי", !st.audience],
+      ["s-angles", "מה אומרים", combos().length > 0 && !st.angles],
+      ["s-ads", "בוחרים", combos().length > 0 && !st.ads],
       ["s-pack", "אורזים", packedNow()],
     ];
     $("steps").innerHTML = steps.map(([id, t, done]) => `<a href="#" data-to="${id}" class="${done ? "done" : ""}">${t}</a>`).join("");
@@ -679,9 +703,11 @@ main { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 2
   $("ads").addEventListener("click", (ev) => {
     const b = ev.target.closest(".vote button"); if (!b) return;
     const k = b.closest(".ad").dataset.key;
-    const picks = Object.assign({}, c.picks || {});
-    if (picks[k] === b.dataset.v) delete picks[k]; else picks[k] = b.dataset.v;
-    setField(["picks"], picks, 0);
+    const next = (c.picks || {})[k] === b.dataset.v ? null : b.dataset.v;
+    c.picks = Object.assign({}, c.picks || {});
+    if (next === null) delete c.picks[k]; else c.picks[k] = next;
+    send([{ op: "set", path: ["picks", k], value: next }]);
+    renderLive();
   });
   $("conflicts").addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-conf]"); if (!b) return;
